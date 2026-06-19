@@ -13,6 +13,8 @@ export interface TuiOptions {
   footerRight: () => string;
   /** Dim hint shown when the input is empty. */
   placeholder: string;
+  /** Reprints the header (banner). Called after a full clear on resize. */
+  redrawHeader?: () => void;
   /** Called on Enter. Output is printed normally (raw mode is off). Return true to quit. */
   onSubmit: (line: string) => Promise<boolean>;
 }
@@ -206,12 +208,21 @@ export async function runTui(opts: TuiOptions): Promise<void> {
     if (stdin.isTTY) stdin.setRawMode(on);
   };
 
-  // Resize fires rapidly during a drag; debounce and repaint once it settles.
+  // On resize the terminal reflows previously drawn wide lines, which invalidates
+  // all relative cursor math. So we don't try to patch — we fully clear, reprint
+  // the header, forget the old geometry, and repaint from scratch. Debounced so a
+  // drag only triggers one repaint once it settles.
   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
   const onResize = () => {
     if (busy) return;
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => !busy && render(), 50);
+    resizeTimer = setTimeout(() => {
+      if (busy) return;
+      stdout.write("\x1b[2J\x1b[H");
+      opts.redrawHeader?.();
+      prevUp = -1;
+      render();
+    }, 80);
   };
 
   const teardown = () => {

@@ -170,6 +170,7 @@ export async function startRepl(cfg: LemaConfig, provider: Provider): Promise<vo
     commands: tuiCommands,
     footerRight: () => footerRight,
     placeholder: 'Try "add a /health route and a test"  ·  / for commands',
+    redrawHeader: () => banner(model),
     onSubmit: (line) => {
       // Echo the submitted line into the transcript so the user sees what they sent.
       if (line) ui.log(ui.magenta("› ") + (line.startsWith("/") ? ui.cyan(line) : line));
