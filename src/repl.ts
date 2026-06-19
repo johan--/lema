@@ -160,7 +160,11 @@ export async function startRepl(cfg: LemaConfig, provider: Provider): Promise<vo
     commands: tuiCommands,
     footerRight: `${model} · local`,
     placeholder: 'Try "add a /health route and a test"  ·  / for commands',
-    onSubmit: (line) => handle(session, line),
+    onSubmit: (line) => {
+      // Echo the submitted line into the transcript so the user sees what they sent.
+      if (line) ui.log(ui.magenta("› ") + (line.startsWith("/") ? ui.cyan(line) : line));
+      return handle(session, line);
+    },
   });
 
   ui.log(ui.dim("bye"));

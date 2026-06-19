@@ -137,6 +137,11 @@ export async function runTui(opts: TuiOptions): Promise<void> {
     const ms = matches();
 
     if (key.name === "return" || key.name === "enter" || str === "\r" || str === "\n") {
+      // If the popup is open, Enter runs the highlighted command (autocomplete-on-enter).
+      if (ms.length) {
+        buf = "/" + ms[selected].name;
+        cursor = buf.length;
+      }
       return void submit();
     }
     if (key.ctrl && key.name === "c") {
