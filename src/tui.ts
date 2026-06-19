@@ -33,7 +33,7 @@ export async function runTui(opts: TuiOptions): Promise<void> {
   let busy = false;
   let prevUp = -1; // lines from the input row up to the top of the rendered region
 
-  const cols = () => Math.min(stdout.columns || 80, 120);
+  const cols = () => Math.max(stdout.columns || 80, 24);
 
   // ---- view helpers -------------------------------------------------------
 
@@ -92,13 +92,12 @@ export async function runTui(opts: TuiOptions): Promise<void> {
     const { line: mid, col } = inputRow(w);
     const lines = [...pop, boxTop(w), mid, boxBottom(w), footer(w)];
 
-    // Clear the previously drawn region, then repaint.
-    if (prevUp >= 0) stdout.write(`\x1b[${prevUp}F\x1b[J`);
-    else stdout.write("\r\x1b[J");
-    stdout.write(lines.join("\n"));
-
-    // Park the cursor on the input row at the right column.
-    stdout.write("\x1b[2A" + `\x1b[${col}G`);
+    // Disable line wrap (\x1b[?7l) around the repaint so full-width lines never
+    // trigger a phantom wrap — that keeps one logical line == one screen row, so
+    // the relative cursor math stays correct even across terminal resizes.
+    const clear = prevUp >= 0 ? `\x1b[${prevUp}F\x1b[J` : "\r\x1b[J";
+    const park = "\x1b[2A" + `\x1b[${col}G`; // back up to the input row, set column
+    stdout.write("\x1b[?7l" + clear + lines.join("\n") + park + "\x1b[?7h");
     prevUp = pop.length + 1; // input row is this many lines below the region top
   };
 
@@ -206,9 +205,17 @@ export async function runTui(opts: TuiOptions): Promise<void> {
   const setRaw = (on: boolean) => {
     if (stdin.isTTY) stdin.setRawMode(on);
   };
-  const onResize = () => !busy && render();
+
+  // Resize fires rapidly during a drag; debounce and repaint once it settles.
+  let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+  const onResize = () => {
+    if (busy) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => !busy && render(), 50);
+  };
 
   const teardown = () => {
+    clearTimeout(resizeTimer);
     clearRegion();
     stdin.off("keypress", onKey);
     stdout.off("resize", onResize);
