@@ -1,6 +1,7 @@
 import type { ModelProvider, ChatMessage } from "../provider.js";
 import { ALL_TOOLS, toolMap, type Tool } from "../tools/index.js";
 import { SkillStore } from "../skills/index.js";
+import { ContextManager } from "../context/index.js";
 const SYSTEM = `You are lema, a focused local coding agent running on a small local model.
 You operate inside the user's working directory through tools.
 
@@ -46,6 +47,8 @@ export interface RunOptions {
   skills?: SkillStore;
   onEvent?: (e: AgentEvent) => void;
   signal?: AbortSignal;
+  /** Persistent context for cross-turn memory. Created once per session in repl. */
+  context?: ContextManager;
 }
 
 /** Run the agent loop on a single task until it stops calling tools or hits maxSteps. */
@@ -54,18 +57,24 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
   const tools = opts.tools ?? ALL_TOOLS;
   const tmap = toolMap(tools);
   const emit = opts.onEvent ?? (() => {});
+  const ctx = opts.context ?? new ContextManager();
 
   const model = await provider.resolveModel();
-  const messages: ChatMessage[] = [{ role: "system", content: SYSTEM }];
 
-  // Retrieve relevant skills and inject them as a hint block (the self-improvement payoff).
+  // The system prompt is pushed once per session; subsequent tasks reuse the
+  // existing conversation so it persists across turns (cross-turn memory).
+  if (!ctx.isInitialized()) {
+    ctx.push({ role: "system", content: SYSTEM });
+  }
+
+  // Skill recall depends on the current task, so it runs on every turn.
   if (opts.skills) {
     const relevant = await opts.skills.search(task, 3).catch(() => []);
     if (relevant.length) {
       const block = relevant
         .map((s) => `### ${s.name} (${s.kind})\n${s.description}\n${s.body}`)
         .join("\n\n");
-      messages.push({
+      ctx.push({
         role: "system",
         content: `You have these previously-verified skills. Reuse them when relevant:\n\n${block}`,
       });
@@ -73,7 +82,7 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
     }
   }
 
-  messages.push({ role: "user", content: task });
+  ctx.push({ role: "user", content: task });
 
   const schemas = tools.map((t) => t.schema);
   let steps = 0;
@@ -97,19 +106,20 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
     if (opts.signal?.aborted) break;
     steps++;
     emit({ type: "thinking" });
-    const { message: reply, usage } = await provider.chat(messages, { model, tools: schemas, signal: opts.signal });
+    const { message: reply, usage } = await provider.chat(ctx.render(), { model, tools: schemas, signal: opts.signal });
     emit({ type: "thinking-stop" });
     if (usage) {
       promptTok += usage.prompt_tokens ?? 0;
       completionTok += usage.completion_tokens ?? 0;
       ctxTok = usage.total_tokens ?? ctxTok;
+      ctx.updateUsage(ctxTok);
     }
-    messages.push(reply);
+    ctx.push(reply);
 
     if (!reply.tool_calls?.length) {
       const answer = reply.content ?? "";
       emit({ type: "done", text: answer, stats: stats() });
-      return { answer, steps, transcript: messages };
+      return { answer, steps, transcript: ctx.render() };
     }
 
     if (reply.content) emit({ type: "assistant", text: reply.content });
@@ -122,7 +132,7 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
         args = JSON.parse(call.function.arguments || "{}");
       } catch {
         result = `ERROR: arguments were not valid JSON: ${call.function.arguments}`;
-        messages.push({ role: "tool", tool_call_id: call.id, content: result });
+        ctx.push({ role: "tool", tool_call_id: call.id, content: result });
         continue;
       }
       emit({ type: "tool", tool: call.function.name, detail: summarizeArgs(args) });
@@ -135,12 +145,12 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
           result = `ERROR: ${(e as Error).message}`;
         }
       }
-      messages.push({ role: "tool", tool_call_id: call.id, content: result });
+      ctx.push({ role: "tool", tool_call_id: call.id, content: result });
     }
   }
 
   emit({ type: "done", text: "(stopped: hit maxSteps)", stats: stats() });
-  return { answer: "Stopped after reaching the step limit.", steps, transcript: messages };
+  return { answer: "Stopped after reaching the step limit.", steps, transcript: ctx.render() };
 }
 
 function summarizeArgs(args: Record<string, any>): string {
