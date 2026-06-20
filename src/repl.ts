@@ -5,8 +5,9 @@ import { dirname, resolve } from "node:path";
 import type { LemaConfig } from "./config.js";
 import { Provider } from "./provider.js";
 import { SkillStore } from "./skills.js";
-import { runAgent, consoleRenderer, formatStats, type AgentStats } from "./agent.js";
-import { runTui, type TuiCommand } from "./tui.js";
+import { runAgent, consoleRenderer, formatStats, type AgentStats, type AgentEvent } from "./agent.js";
+import { Tui, type TuiCommand } from "./tui.js";
+import { renderMarkdown } from "./markdown.js";
 import * as ui from "./ui.js";
 
 interface Session {
@@ -15,6 +16,8 @@ interface Session {
   skills: SkillStore;
   /** Called with the stats of each completed run (the TUI shows them in the footer). */
   onStats?: (s: AgentStats) => void;
+  /** Renderer for agent events (the TUI swaps in its own; batch uses the console). */
+  render?: (e: AgentEvent) => void;
 }
 
 /** A slash command. Adding one must not require touching the REPL loop (open/closed). */
@@ -84,15 +87,32 @@ function version(): string {
   }
 }
 
-function banner(model: string): void {
+function bannerLines(model: string): string[] {
   const v = ui.dim("v" + version());
-  ui.log();
-  ui.log("  " + ui.magenta("╭─────╮"));
-  ui.log("  " + ui.magenta("│     │") + "   " + ui.bold("lema") + "  " + v);
-  ui.log("  " + ui.magenta("│  ") + ui.bold(ui.magenta("λ")) + ui.magenta("  │") + "   " + model + ui.dim(" · local"));
-  ui.log("  " + ui.magenta("│     │") + "   " + ui.dim(process.cwd()));
-  ui.log("  " + ui.magenta("╰─────╯"));
-  ui.log();
+  return [
+    "",
+    "  " + ui.magenta("╭─────╮"),
+    "  " + ui.magenta("│     │") + "   " + ui.bold("lema") + "  " + v,
+    "  " + ui.magenta("│  ") + ui.bold(ui.magenta("λ")) + ui.magenta("  │") + "   " + model + ui.dim(" · local"),
+    "  " + ui.magenta("│     │") + "   " + ui.dim(process.cwd()),
+    "  " + ui.magenta("╰─────╯"),
+    "",
+  ];
+}
+
+/** Renders agent events into the TUI: status spinner + transcript output. */
+function tuiRenderer(tui: Tui): (e: AgentEvent) => void {
+  return (e) => {
+    if (e.type === "thinking") tui.setStatus("thinking…");
+    else if (e.type === "thinking-stop") tui.setStatus(null);
+    else if (e.type === "step") ui.step("skills", e.text ?? "");
+    else if (e.type === "tool") ui.tool(e.tool ?? "?", e.detail ?? "");
+    else if (e.type === "assistant" && e.text) ui.log(renderMarkdown(e.text));
+    else if (e.type === "done") {
+      ui.log();
+      ui.log(renderMarkdown(e.text ?? ""));
+    }
+  };
 }
 
 async function dispatch(session: Session, raw: string): Promise<boolean> {
@@ -106,13 +126,14 @@ async function dispatch(session: Session, raw: string): Promise<boolean> {
 }
 
 async function runTask(session: Session, task: string): Promise<void> {
+  const render = session.render ?? consoleRenderer;
   await runAgent(task, {
     cfg: session.cfg,
     provider: session.provider,
     cwd: process.cwd(),
     skills: session.skills,
     onEvent: (e) => {
-      consoleRenderer(e);
+      render(e);
       if (e.type === "done" && e.stats) session.onStats?.(e.stats);
     },
   });
@@ -151,9 +172,9 @@ async function runBatch(session: Session): Promise<void> {
 export async function startRepl(cfg: LemaConfig, provider: Provider): Promise<void> {
   const session: Session = { cfg, provider, skills: new SkillStore(cfg, provider) };
   const model = await provider.resolveModel().catch(() => "(no model loaded)");
-  banner(model);
 
   if (!stdin.isTTY) {
+    bannerLines(model).forEach((l) => ui.log(l));
     await runBatch(session);
     ui.log(ui.dim("bye"));
     return;
@@ -166,17 +187,21 @@ export async function startRepl(cfg: LemaConfig, provider: Provider): Promise<vo
   };
 
   const tuiCommands: TuiCommand[] = COMMANDS.map((c) => ({ name: c.name, desc: c.desc }));
-  await runTui({
+  const tui = new Tui({
+    header: () => bannerLines(model),
     commands: tuiCommands,
     footerRight: () => footerRight,
     placeholder: 'Try "add a /health route and a test"  ·  / for commands',
-    redrawHeader: () => banner(model),
-    onSubmit: (line) => {
-      // Echo the submitted line into the transcript so the user sees what they sent.
-      if (line) ui.log(ui.magenta("› ") + (line.startsWith("/") ? ui.cyan(line) : line));
-      return handle(session, line);
-    },
+    onSubmit: (line) => handle(session, line),
   });
 
+  // Capture all transcript output into the TUI, and route agent events to it.
+  session.render = tuiRenderer(tui);
+  ui.setSink((s) => tui.print(s));
+  try {
+    await tui.run();
+  } finally {
+    ui.setSink(null);
+  }
   ui.log(ui.dim("bye"));
 }

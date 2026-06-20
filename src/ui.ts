@@ -10,8 +10,16 @@ export const yellow = c("33");
 export const red = c("31");
 export const magenta = c("35");
 
+let sink: ((s: string) => void) | null = null;
+
+/** Redirect log output into a sink (the TUI captures the transcript this way). */
+export function setSink(fn: ((s: string) => void) | null): void {
+  sink = fn;
+}
+
 export const log = (s = ""): void => {
-  process.stdout.write(s + "\n");
+  if (sink) sink(s);
+  else process.stdout.write(s + "\n");
 };
 export const step = (label: string, detail = "") => log(`${cyan("●")} ${bold(label)} ${dim(detail)}`);
 export const tool = (name: string, detail: string) => log(`  ${magenta("→")} ${name} ${dim(detail)}`);

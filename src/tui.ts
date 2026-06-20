@@ -5,242 +5,314 @@ import * as ui from "./ui.js";
 export interface TuiCommand {
   name: string;
   desc: string;
+  args?: string;
 }
 
 export interface TuiOptions {
+  /** Header (banner) lines, recomputed each frame; scroll with the transcript. */
+  header: () => string[];
   commands: TuiCommand[];
-  /** Right-aligned footer text, read on every repaint so it can change over time. */
+  /** Right-aligned footer text, read every frame so it can change. */
   footerRight: () => string;
   /** Dim hint shown when the input is empty. */
   placeholder: string;
-  /** Reprints the header (banner). Called after a full clear on resize. */
-  redrawHeader?: () => void;
-  /** Called on Enter. Output is printed normally (raw mode is off). Return true to quit. */
+  /** Called on Enter. Return true to quit. */
   onSubmit: (line: string) => Promise<boolean>;
 }
 
+const ESC_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const MAX_POPUP = 6;
+const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** Visible length, ignoring ANSI escape sequences. */
+function vlen(s: string): number {
+  return s.replace(ESC_RE, "").length;
+}
+
+/** Hard-wrap a (possibly ANSI-styled) line to `width` visible columns. */
+function wrap(line: string, width: number): string[] {
+  if (width < 1 || vlen(line) <= width) return [line];
+  const out: string[] = [];
+  let cur = "";
+  let n = 0;
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] === "\x1b") {
+      const m = line.slice(i).match(/^\x1b\[[0-9;?]*[A-Za-z]/);
+      if (m) {
+        cur += m[0];
+        i += m[0].length;
+        continue;
+      }
+    }
+    cur += line[i];
+    i++;
+    n++;
+    if (n >= width) {
+      out.push(cur);
+      cur = "";
+      n = 0;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
 
 /**
- * A zero-dependency raw-mode line editor with a bordered input, a pinned footer,
- * and a slash-command popup. The whole bottom region is redrawn on every keystroke;
- * during onSubmit we drop out of raw mode so agent output scrolls normally.
+ * A full-screen, alternate-buffer TUI compositor. It keeps the transcript in
+ * memory and repaints the whole frame (header + scrollback + input box + footer)
+ * on every change, wrapped to the current width. Because every frame is computed
+ * from scratch for the current size, resizing can never corrupt the layout.
  */
-export async function runTui(opts: TuiOptions): Promise<void> {
-  let buf = "";
-  let cursor = 0;
-  let selected = 0;
-  const history: string[] = [];
-  let histIdx: number | null = null;
-  let busy = false;
-  let prevUp = -1; // lines from the input row up to the top of the rendered region
+export class Tui {
+  private transcript: string[] = [];
+  private buf = "";
+  private cursor = 0;
+  private selected = 0;
+  private history: string[] = [];
+  private histIdx: number | null = null;
+  private busy = false;
+  private status: string | null = null;
+  private spinFrame = 0;
+  private spinTimer: ReturnType<typeof setInterval> | undefined;
+  private spinT0 = 0;
+  private scheduled = false;
+  private done = false;
+  private resolveDone: () => void = () => {};
 
-  const cols = () => Math.max(stdout.columns || 80, 24);
+  constructor(private opts: TuiOptions) {}
 
-  // ---- view helpers -------------------------------------------------------
+  // ---- public API used by the host -----------------------------------------
 
-  const matches = (): TuiCommand[] => {
-    if (!buf.startsWith("/") || buf.includes(" ")) return [];
-    const frag = buf.slice(1).toLowerCase();
-    return opts.commands.filter((c) => c.name.startsWith(frag)).slice(0, MAX_POPUP);
-  };
+  /** Append output to the transcript (splitting multi-line strings). */
+  print(s: string): void {
+    for (const line of s.split("\n")) this.transcript.push(line);
+    this.schedule();
+  }
 
-  const popupRows = (ms: TuiCommand[]): string[] =>
-    ms.map((c, i) => {
-      const marker = i === selected ? ui.magenta("❯ ") : "  ";
-      const name = ("/" + c.name).padEnd(12);
-      return "  " + marker + (i === selected ? ui.bold(name) : name) + ui.dim(c.desc);
-    });
+  /** Show (or clear) an animated status line above the input box. */
+  setStatus(text: string | null): void {
+    if (text) {
+      this.status = text;
+      if (!this.spinTimer) {
+        this.spinT0 = Date.now();
+        this.spinTimer = setInterval(() => {
+          this.spinFrame++;
+          this.render();
+        }, 80);
+      }
+    } else {
+      this.status = null;
+      if (this.spinTimer) {
+        clearInterval(this.spinTimer);
+        this.spinTimer = undefined;
+      }
+    }
+    this.schedule();
+  }
 
-  const boxTop = (w: number) => ui.magenta("╭" + "─".repeat(w - 2) + "╮");
-  const boxBottom = (w: number) => ui.magenta("╰" + "─".repeat(w - 2) + "╯");
+  async run(): Promise<void> {
+    emitKeypressEvents(stdin);
+    if (stdin.isTTY) stdin.setRawMode(true);
+    stdin.resume();
+    stdout.write("\x1b[?1049h\x1b[2J"); // enter alternate screen
+    stdin.on("keypress", this.onKey);
+    stdout.on("resize", this.onResize);
+    this.render();
+    await new Promise<void>((res) => (this.resolveDone = res));
+  }
 
-  const inputRow = (w: number): { line: string; col: number } => {
-    const textArea = w - 6; // "│ › " + text + " │"
+  // ---- frame composition ---------------------------------------------------
+
+  private matches(): TuiCommand[] {
+    if (!this.buf.startsWith("/") || this.buf.includes(" ")) return [];
+    const frag = this.buf.slice(1).toLowerCase();
+    return this.opts.commands.filter((c) => c.name.startsWith(frag)).slice(0, MAX_POPUP);
+  }
+
+  private inputRegion(w: number): { lines: string[]; inputOffset: number; col: number } {
+    const lines: string[] = [];
+    const ms = this.matches();
+    if (this.selected >= ms.length) this.selected = Math.max(0, ms.length - 1);
+    for (let i = 0; i < ms.length; i++) {
+      const sel = i === this.selected;
+      const name = ("/" + ms[i].name).padEnd(12);
+      lines.push("  " + (sel ? ui.magenta("❯ ") : "  ") + (sel ? ui.bold(name) : name) + ui.dim(ms[i].desc));
+    }
+    if (this.status) {
+      const s = ((Date.now() - this.spinT0) / 1000).toFixed(1);
+      lines.push("  " + ui.magenta(SPIN[this.spinFrame % SPIN.length]) + " " + ui.dim(`${this.status} ${s}s`));
+    }
+    const dash = Math.max(0, w - 2);
+    const { line: mid, col } = this.inputLine(w);
+    const inputOffset = lines.length + 1; // mid sits right after the top border
+    lines.push(ui.magenta("╭" + "─".repeat(dash) + "╮"), mid, ui.magenta("╰" + "─".repeat(dash) + "╯"), this.footer(w));
+    return { lines, inputOffset, col };
+  }
+
+  private inputLine(w: number): { line: string; col: number } {
+    const textArea = Math.max(1, w - 6);
     let shown: string;
     let curOff: number;
-    if (buf.length === 0) {
-      shown = ui.dim(opts.placeholder.slice(0, textArea));
+    if (this.buf.length === 0) {
+      shown = ui.dim(this.opts.placeholder.slice(0, textArea));
       curOff = 0;
-    } else if (buf.length > textArea) {
-      shown = "…" + buf.slice(buf.length - (textArea - 1));
+    } else if (this.buf.length > textArea) {
+      shown = "…" + this.buf.slice(this.buf.length - (textArea - 1));
       curOff = textArea;
     } else {
-      shown = buf;
-      curOff = cursor;
+      shown = this.buf;
+      curOff = this.cursor;
     }
-    const rawLen = buf.length === 0 ? Math.min(opts.placeholder.length, textArea) : Math.min(buf.length, textArea);
+    const rawLen = this.buf.length === 0 ? Math.min(this.opts.placeholder.length, textArea) : Math.min(this.buf.length, textArea);
     const pad = " ".repeat(Math.max(0, textArea - rawLen));
     const line = ui.magenta("│") + " " + ui.magenta("›") + " " + shown + pad + " " + ui.magenta("│");
     return { line, col: 5 + curOff };
-  };
+  }
 
-  const footer = (w: number): string => {
+  private footer(w: number): string {
     const left = " ? for shortcuts · /exit to quit";
-    let right = opts.footerRight() + " ";
-    let pad = w - left.length - right.length;
+    let right = this.opts.footerRight() + " ";
+    let pad = w - left.length - vlen(right);
     if (pad < 1) {
       right = right.slice(0, Math.max(0, w - left.length - 1)) + " ";
       pad = 1;
     }
     return ui.dim(left + " ".repeat(pad) + right);
-  };
+  }
 
-  const render = () => {
-    const w = cols();
-    const ms = matches();
-    if (selected >= ms.length) selected = Math.max(0, ms.length - 1);
-    const pop = popupRows(ms);
-    const { line: mid, col } = inputRow(w);
-    const lines = [...pop, boxTop(w), mid, boxBottom(w), footer(w)];
+  private render(): void {
+    if (this.done) return;
+    const w = Math.max(stdout.columns || 80, 24);
+    const rows = Math.max(stdout.rows || 24, 8);
+    const region = this.inputRegion(w);
+    const bodyH = Math.max(0, rows - region.lines.length);
 
-    // Disable line wrap (\x1b[?7l) around the repaint so full-width lines never
-    // trigger a phantom wrap — that keeps one logical line == one screen row, so
-    // the relative cursor math stays correct even across terminal resizes.
-    const clear = prevUp >= 0 ? `\x1b[${prevUp}F\x1b[J` : "\r\x1b[J";
-    const park = "\x1b[2A" + `\x1b[${col}G`; // back up to the input row, set column
-    stdout.write("\x1b[?7l" + clear + lines.join("\n") + park + "\x1b[?7h");
-    prevUp = pop.length + 1; // input row is this many lines below the region top
-  };
+    const all = [...this.opts.header(), ...this.transcript].flatMap((l) => wrap(l, w));
+    const view = all.slice(Math.max(0, all.length - bodyH));
+    const padCount = bodyH - view.length;
+    const screen = [...view, ...Array(padCount).fill(""), ...region.lines];
 
-  const clearRegion = () => {
-    if (prevUp >= 0) stdout.write(`\x1b[${prevUp}F\x1b[J`);
-    prevUp = -1;
-  };
-
-  // ---- key handling -------------------------------------------------------
-
-  const submit = async () => {
-    const line = buf.trim();
-    clearRegion();
-    buf = "";
-    cursor = 0;
-    selected = 0;
-    histIdx = null;
-    if (line) history.push(line);
-
-    setRaw(false);
-    busy = true;
-    let quit = false;
-    try {
-      quit = await opts.onSubmit(line);
-    } catch (e) {
-      ui.err((e as Error).message);
+    // Begin synchronized update, disable wrap, repaint from home.
+    let out = "\x1b[?2026h\x1b[?7l\x1b[H";
+    for (let r = 0; r < screen.length; r++) {
+      out += screen[r] + "\x1b[K";
+      if (r < screen.length - 1) out += "\n";
     }
-    busy = false;
-    if (quit) return teardown();
-    setRaw(true);
-    render();
-  };
+    out += "\x1b[J";
+    const inputRow = bodyH + region.inputOffset + 1; // 1-indexed absolute row
+    out += `\x1b[${inputRow};${region.col}H`;
+    out += "\x1b[?7h\x1b[?2026l";
+    stdout.write(out);
+  }
 
-  const onKey = (str: string | undefined, key: Key) => {
-    if (busy) return;
-    const ms = matches();
+  private schedule(): void {
+    if (this.scheduled || this.done) return;
+    this.scheduled = true;
+    queueMicrotask(() => {
+      this.scheduled = false;
+      this.render();
+    });
+  }
+
+  // ---- input ---------------------------------------------------------------
+
+  private onResize = (): void => this.render();
+
+  private recallHistory(dir: number): void {
+    if (!this.history.length) return;
+    if (this.histIdx === null) this.histIdx = dir < 0 ? this.history.length - 1 : this.history.length;
+    else this.histIdx = Math.max(0, Math.min(this.history.length, this.histIdx + dir));
+    this.buf = this.histIdx >= this.history.length ? "" : this.history[this.histIdx];
+    if (this.histIdx >= this.history.length) this.histIdx = null;
+    this.cursor = this.buf.length;
+  }
+
+  private onKey = (str: string | undefined, key: Key): void => {
+    if (this.busy) return;
+    const ms = this.matches();
 
     if (key.name === "return" || key.name === "enter" || str === "\r" || str === "\n") {
-      // If the popup is open, Enter runs the highlighted command (autocomplete-on-enter).
       if (ms.length) {
-        buf = "/" + ms[selected].name;
-        cursor = buf.length;
+        this.buf = "/" + ms[this.selected].name;
+        this.cursor = this.buf.length;
       }
-      return void submit();
+      return void this.submit();
     }
     if (key.ctrl && key.name === "c") {
-      if (buf) {
-        buf = "";
-        cursor = 0;
-      } else return teardown();
+      if (this.buf) {
+        this.buf = "";
+        this.cursor = 0;
+      } else return this.teardown();
     } else if (key.ctrl && key.name === "d") {
-      if (!buf) return teardown();
+      if (!this.buf) return this.teardown();
     } else if (key.name === "backspace") {
-      if (cursor > 0) {
-        buf = buf.slice(0, cursor - 1) + buf.slice(cursor);
-        cursor--;
+      if (this.cursor > 0) {
+        this.buf = this.buf.slice(0, this.cursor - 1) + this.buf.slice(this.cursor);
+        this.cursor--;
       }
     } else if (key.name === "left") {
-      if (cursor > 0) cursor--;
+      if (this.cursor > 0) this.cursor--;
     } else if (key.name === "right") {
-      if (cursor < buf.length) cursor++;
+      if (this.cursor < this.buf.length) this.cursor++;
     } else if (key.name === "home" || (key.ctrl && key.name === "a")) {
-      cursor = 0;
+      this.cursor = 0;
     } else if (key.name === "end" || (key.ctrl && key.name === "e")) {
-      cursor = buf.length;
+      this.cursor = this.buf.length;
     } else if (key.name === "up") {
-      if (ms.length) selected = (selected - 1 + ms.length) % ms.length;
-      else recallHistory(-1);
+      if (ms.length) this.selected = (this.selected - 1 + ms.length) % ms.length;
+      else this.recallHistory(-1);
     } else if (key.name === "down") {
-      if (ms.length) selected = (selected + 1) % ms.length;
-      else recallHistory(1);
+      if (ms.length) this.selected = (this.selected + 1) % ms.length;
+      else this.recallHistory(1);
     } else if (key.name === "tab") {
       if (ms.length) {
-        buf = "/" + ms[selected].name + " ";
-        cursor = buf.length;
-        selected = 0;
+        this.buf = "/" + ms[this.selected].name + " ";
+        this.cursor = this.buf.length;
+        this.selected = 0;
       }
     } else if (str && !key.ctrl && !key.meta && str.length === 1 && str >= " ") {
-      buf = buf.slice(0, cursor) + str + buf.slice(cursor);
-      cursor++;
+      this.buf = this.buf.slice(0, this.cursor) + str + this.buf.slice(this.cursor);
+      this.cursor++;
     } else {
-      return; // unhandled key, no repaint
+      return;
     }
-    render();
+    this.render();
   };
 
-  const recallHistory = (dir: number) => {
-    if (!history.length) return;
-    if (histIdx === null) histIdx = dir < 0 ? history.length - 1 : history.length;
-    else histIdx = Math.max(0, Math.min(history.length, histIdx + dir));
-    if (histIdx >= history.length) {
-      histIdx = null;
-      buf = "";
-    } else {
-      buf = history[histIdx];
+  private async submit(): Promise<void> {
+    const line = this.buf.trim();
+    this.buf = "";
+    this.cursor = 0;
+    this.selected = 0;
+    this.histIdx = null;
+    if (line) {
+      this.history.push(line);
+      this.print(ui.magenta("› ") + (line.startsWith("/") ? ui.cyan(line) : line));
     }
-    cursor = buf.length;
-  };
+    this.busy = true;
+    this.render();
+    let quit = false;
+    try {
+      quit = await this.opts.onSubmit(line);
+    } catch (e) {
+      this.print(ui.red("✗ ") + (e as Error).message);
+    }
+    this.setStatus(null);
+    this.busy = false;
+    if (quit) return this.teardown();
+    this.render();
+  }
 
-  // ---- lifecycle ----------------------------------------------------------
-
-  let resolveDone!: () => void;
-  const done = new Promise<void>((res) => (resolveDone = res));
-
-  const setRaw = (on: boolean) => {
-    if (stdin.isTTY) stdin.setRawMode(on);
-  };
-
-  // On resize the terminal reflows previously drawn wide lines, which invalidates
-  // all relative cursor math. So we don't try to patch — we fully clear, reprint
-  // the header, forget the old geometry, and repaint from scratch. Debounced so a
-  // drag only triggers one repaint once it settles.
-  let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-  const onResize = () => {
-    if (busy) return;
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      if (busy) return;
-      stdout.write("\x1b[2J\x1b[H");
-      opts.redrawHeader?.();
-      prevUp = -1;
-      render();
-    }, 80);
-  };
-
-  const teardown = () => {
-    clearTimeout(resizeTimer);
-    clearRegion();
-    stdin.off("keypress", onKey);
-    stdout.off("resize", onResize);
-    setRaw(false);
+  private teardown(): void {
+    if (this.done) return;
+    this.done = true;
+    if (this.spinTimer) clearInterval(this.spinTimer);
+    stdin.off("keypress", this.onKey);
+    stdout.off("resize", this.onResize);
+    stdout.write("\x1b[?2026l\x1b[?7h\x1b[?1049l"); // leave alternate screen
+    if (stdin.isTTY) stdin.setRawMode(false);
     stdin.pause();
-    resolveDone();
-  };
-
-  emitKeypressEvents(stdin);
-  setRaw(true);
-  stdin.resume();
-  stdin.on("keypress", onKey);
-  stdout.on("resize", onResize);
-  render();
-
-  await done;
+    this.resolveDone();
+  }
 }
