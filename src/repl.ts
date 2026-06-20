@@ -11,7 +11,8 @@ import { renderMarkdown } from "./markdown.js";
 import * as ui from "./ui.js";
 
 interface Session {
-  cfg: LemaConfig;
+  baseUrl: string;
+  maxSteps: number;
   provider: ModelProvider;
   skills: SkillStore;
   /** Called with the stats of each completed run (the TUI shows them in the footer). */
@@ -66,7 +67,7 @@ const COMMANDS: SlashCommand[] = [
     desc: "check the server is reachable",
     run: async (s) => {
       const models = await s.provider.listModels();
-      ui.ok(`server up at ${s.cfg.baseUrl} — ${models.length} model(s)`);
+      ui.ok(`server up at ${s.baseUrl} — ${models.length} model(s)`);
     },
   },
   { name: "cwd", desc: "print the working directory", run: () => ui.log("  " + process.cwd()) },
@@ -163,7 +164,7 @@ async function dispatch(session: Session, raw: string): Promise<boolean> {
 async function runTask(session: Session, task: string): Promise<void> {
   const render = session.render ?? consoleRenderer;
   await runAgent(task, {
-    cfg: session.cfg,
+    maxSteps: session.maxSteps,
     provider: session.provider,
     cwd: process.cwd(),
     skills: session.skills,
@@ -205,7 +206,12 @@ async function runBatch(session: Session): Promise<void> {
 
 /** Start the interactive session. Bare `lema` lands here. */
 export async function startRepl(cfg: LemaConfig, provider: ModelProvider): Promise<void> {
-  const session: Session = { cfg, provider, skills: new SkillStore(cfg, provider) };
+  const session: Session = {
+    baseUrl: cfg.baseUrl,
+    maxSteps: cfg.maxSteps,
+    provider,
+    skills: new SkillStore(cfg, provider),
+  };
   const model = await provider.resolveModel().catch(() => "(no model loaded)");
 
   if (!stdin.isTTY) {

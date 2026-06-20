@@ -1,4 +1,3 @@
-import type { LemaConfig } from "./config.js";
 import type { ModelProvider, ChatMessage } from "./provider.js";
 import { ALL_TOOLS, toolMap, type Tool } from "./tools.js";
 import { SkillStore } from "./skills.js";
@@ -40,7 +39,7 @@ export interface AgentResult {
 }
 
 export interface RunOptions {
-  cfg: LemaConfig;
+  maxSteps: number;
   provider: ModelProvider;
   cwd: string;
   tools?: Tool[];
@@ -50,7 +49,7 @@ export interface RunOptions {
 
 /** Run the agent loop on a single task until it stops calling tools or hits maxSteps. */
 export async function runAgent(task: string, opts: RunOptions): Promise<AgentResult> {
-  const { cfg, provider, cwd } = opts;
+  const { maxSteps, provider, cwd } = opts;
   const tools = opts.tools ?? ALL_TOOLS;
   const tmap = toolMap(tools);
   const emit = opts.onEvent ?? (() => {});
@@ -93,7 +92,7 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
     };
   };
 
-  while (steps < cfg.maxSteps) {
+  while (steps < maxSteps) {
     steps++;
     emit({ type: "thinking" });
     const { message: reply, usage } = await provider.chat(messages, { model, tools: schemas });

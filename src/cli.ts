@@ -70,7 +70,7 @@ async function main() {
   ui.step("task", task);
   ui.log();
   const store = new SkillStore(cfg, provider);
-  await runAgent(task, { cfg, provider, cwd: process.cwd(), skills: store, onEvent: consoleRenderer });
+  await runAgent(task, { maxSteps: cfg.maxSteps, provider, cwd: process.cwd(), skills: store, onEvent: consoleRenderer });
 }
 
 
