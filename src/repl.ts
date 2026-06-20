@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import type { LemaConfig } from "./config.js";
-import { Provider } from "./provider.js";
+import type { ModelProvider } from "./provider.js";
 import { SkillStore } from "./skills.js";
 import { runAgent, formatStats, type AgentStats, type AgentEvent } from "./agent.js";
 import { Tui, type TuiCommand } from "./tui.js";
@@ -12,7 +12,7 @@ import * as ui from "./ui.js";
 
 interface Session {
   cfg: LemaConfig;
-  provider: Provider;
+  provider: ModelProvider;
   skills: SkillStore;
   /** Called with the stats of each completed run (the TUI shows them in the footer). */
   onStats?: (s: AgentStats) => void;
@@ -204,7 +204,7 @@ async function runBatch(session: Session): Promise<void> {
 }
 
 /** Start the interactive session. Bare `lema` lands here. */
-export async function startRepl(cfg: LemaConfig, provider: Provider): Promise<void> {
+export async function startRepl(cfg: LemaConfig, provider: ModelProvider): Promise<void> {
   const session: Session = { cfg, provider, skills: new SkillStore(cfg, provider) };
   const model = await provider.resolveModel().catch(() => "(no model loaded)");
 

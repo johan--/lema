@@ -1,5 +1,5 @@
 import type { LemaConfig } from "./config.js";
-import { Provider, type ChatMessage } from "./provider.js";
+import type { ModelProvider, ChatMessage } from "./provider.js";
 import { ALL_TOOLS, toolMap, type Tool } from "./tools.js";
 import { SkillStore } from "./skills.js";
 const SYSTEM = `You are lema, a focused local coding agent running on a small local model.
@@ -41,7 +41,7 @@ export interface AgentResult {
 
 export interface RunOptions {
   cfg: LemaConfig;
-  provider: Provider;
+  provider: ModelProvider;
   cwd: string;
   tools?: Tool[];
   skills?: SkillStore;
