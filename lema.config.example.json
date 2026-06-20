@@ -1,0 +1,14 @@
+{
+  "baseUrl": "http://localhost:1234/v1",
+  "embedModel": "text-embedding-nomic-embed-text-v1.5",
+  "temperature": 0.2,
+  "maxTokens": 2048,
+  "maxSteps": 12,
+  "stateDir": ".lema",
+  "context": {
+    "contextWindow": 8192,
+    "reserveTokens": 2048,
+    "keepRecentTokens": 3000,
+    "maskWindow": 1500
+  }
+}

@@ -4,3 +4,6 @@ dist/
 .DS_Store
 .lema/
 .env
+
+# Personal config — copy lema.config.example.json to lema.config.json and edit.
+lema.config.json
