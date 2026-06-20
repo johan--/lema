@@ -2,9 +2,6 @@ import type { LemaConfig } from "./config.js";
 import { Provider, type ChatMessage } from "./provider.js";
 import { ALL_TOOLS, toolMap, type Tool } from "./tools.js";
 import { SkillStore } from "./skills.js";
-import { renderMarkdown } from "./markdown.js";
-import * as ui from "./ui.js";
-
 const SYSTEM = `You are lema, a focused local coding agent running on a small local model.
 You operate inside the user's working directory through tools.
 
@@ -58,6 +55,7 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
   const tmap = toolMap(tools);
   const emit = opts.onEvent ?? (() => {});
 
+  const model = await provider.resolveModel();
   const messages: ChatMessage[] = [{ role: "system", content: SYSTEM }];
 
   // Retrieve relevant skills and inject them as a hint block (the self-improvement payoff).
@@ -98,7 +96,7 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
   while (steps < cfg.maxSteps) {
     steps++;
     emit({ type: "thinking" });
-    const { message: reply, usage } = await provider.chat(messages, { tools: schemas });
+    const { message: reply, usage } = await provider.chat(messages, { model, tools: schemas });
     emit({ type: "thinking-stop" });
     if (usage) {
       promptTok += usage.prompt_tokens ?? 0;
@@ -157,25 +155,3 @@ export function formatStats(s: AgentStats): string {
   return parts.join("  ·  ");
 }
 
-let activeSpinner: ui.SpinHandle | null = null;
-
-/** Wire the default console renderer for agent events. */
-export function consoleRenderer(e: AgentEvent): void {
-  if (e.type !== "thinking" && activeSpinner) {
-    activeSpinner.stop();
-    activeSpinner = null;
-  }
-
-  if (e.type === "thinking") {
-    activeSpinner = ui.spinner("thinking…");
-  } else if (e.type === "step") {
-    ui.step("skills", e.text ?? "");
-  } else if (e.type === "tool") {
-    ui.tool(e.tool ?? "?", e.detail ?? "");
-  } else if (e.type === "assistant" && e.text) {
-    ui.log(renderMarkdown(e.text));
-  } else if (e.type === "done") {
-    ui.log();
-    ui.log(renderMarkdown(e.text ?? ""));
-  }
-}

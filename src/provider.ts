@@ -24,6 +24,7 @@ export interface ToolSchema {
 }
 
 export interface ChatOptions {
+  model?: string;
   tools?: ToolSchema[];
   temperature?: number;
   maxTokens?: number;
@@ -75,7 +76,7 @@ export class Provider {
   }
 
   async chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<ChatResult> {
-    const model = await this.resolveModel();
+    const model = opts.model ?? await this.resolveModel();
     const body: Record<string, unknown> = {
       model,
       messages,

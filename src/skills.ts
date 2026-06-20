@@ -1,8 +1,7 @@
-import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Provider } from "./provider.js";
-import { ensureStateDir } from "./tools.js";
 import type { LemaConfig } from "./config.js";
 
 export type SkillKind = "knowledge" | "procedure";
@@ -41,8 +40,8 @@ function cosine(a: number[], b: number[]): number {
 export class SkillStore {
   private dir: string;
   constructor(private cfg: LemaConfig, private provider: Provider, cwd = process.cwd()) {
-    this.dir = resolve(ensureStateDir(cwd, cfg.stateDir), "skills");
-    ensureStateDir(cwd, `${cfg.stateDir}/skills`);
+    this.dir = resolve(cwd, cfg.stateDir, "skills");
+    mkdirSync(this.dir, { recursive: true });
   }
 
   all(): Skill[] {

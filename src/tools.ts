@@ -102,9 +102,3 @@ export const ALL_TOOLS: Tool[] = [readFile, writeFile, listDir, bash];
 export function toolMap(tools: Tool[] = ALL_TOOLS): Map<string, Tool> {
   return new Map(tools.map((t) => [t.schema.function.name, t]));
 }
-
-export function ensureStateDir(cwd: string, stateDir: string): string {
-  const abs = resolve(cwd, stateDir);
-  mkdirSync(abs, { recursive: true });
-  return abs;
-}

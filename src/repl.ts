@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import type { LemaConfig } from "./config.js";
 import { Provider } from "./provider.js";
 import { SkillStore } from "./skills.js";
-import { runAgent, consoleRenderer, formatStats, type AgentStats, type AgentEvent } from "./agent.js";
+import { runAgent, formatStats, type AgentStats, type AgentEvent } from "./agent.js";
 import { Tui, type TuiCommand } from "./tui.js";
 import { renderMarkdown } from "./markdown.js";
 import * as ui from "./ui.js";
@@ -111,6 +111,28 @@ function bannerLines(model: string): string[] {
     "  " + ui.magenta("╰─────╯"),
     "",
   ];
+}
+
+let activeSpinner: ui.SpinHandle | null = null;
+
+/** Default renderer for non-TTY and single-task runs: spinner + console output. */
+export function consoleRenderer(e: AgentEvent): void {
+  if (e.type !== "thinking" && activeSpinner) {
+    activeSpinner.stop();
+    activeSpinner = null;
+  }
+  if (e.type === "thinking") {
+    activeSpinner = ui.spinner("thinking…");
+  } else if (e.type === "step") {
+    ui.step("skills", e.text ?? "");
+  } else if (e.type === "tool") {
+    ui.tool(e.tool ?? "?", e.detail ?? "");
+  } else if (e.type === "assistant" && e.text) {
+    ui.log(renderMarkdown(e.text));
+  } else if (e.type === "done") {
+    ui.log();
+    ui.log(renderMarkdown(e.text ?? ""));
+  }
 }
 
 /** Renders agent events into the TUI: status spinner + transcript output. */
