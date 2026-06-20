@@ -1,90 +1,7 @@
 import { stdin, stdout } from "node:process";
 import * as ui from "../ui.js";
-
-/** A normalized key/mouse event parsed from a raw stdin sequence. */
-interface ParsedKey {
-  name?: string;
-  ctrl?: boolean;
-  meta?: boolean;
-  str?: string;
-  /** SGR/X10 mouse button byte (Cb); present for mouse events. */
-  mouse?: number;
-}
-
-/**
- * stdin arrives in partial chunks, so escape sequences (especially mouse) can be
- * split across data events. We buffer and only emit COMPLETE sequences — the same
- * approach pi/OpenTUI use. Using readline's keypress here would mangle mouse input.
- */
-function isComplete(data: string): "complete" | "incomplete" | "not-escape" {
-  if (data[0] !== "\x1b") return "not-escape";
-  if (data.length === 1) return "incomplete";
-  const a = data[1];
-  if (a === "[") {
-    if (data[2] === "M") return data.length >= 6 ? "complete" : "incomplete"; // X10 mouse
-    if (data.length < 3) return "incomplete";
-    const last = data.charCodeAt(data.length - 1);
-    return last >= 0x40 && last <= 0x7e ? "complete" : "incomplete"; // CSI final byte
-  }
-  if (a === "O") return data.length >= 3 ? "complete" : "incomplete"; // SS3
-  return "complete"; // ESC + single char (meta)
-}
-
-function extractSequences(buffer: string): { sequences: string[]; remainder: string } {
-  const sequences: string[] = [];
-  let pos = 0;
-  while (pos < buffer.length) {
-    const rem = buffer.slice(pos);
-    if (rem[0] !== "\x1b") {
-      sequences.push(rem[0]);
-      pos++;
-      continue;
-    }
-    let end = 1;
-    for (; end <= rem.length; end++) {
-      if (isComplete(rem.slice(0, end)) === "complete") break;
-    }
-    if (end > rem.length) return { sequences, remainder: rem }; // wait for more bytes
-    sequences.push(rem.slice(0, end));
-    pos += end;
-  }
-  return { sequences, remainder: "" };
-}
-
-function parseSeq(seq: string): ParsedKey {
-  const sgr = seq.match(/^\x1b\[<(\d+);\d+;\d+[Mm]$/);
-  if (sgr) return { mouse: parseInt(sgr[1], 10) };
-  if (seq.startsWith("\x1b[M")) return { mouse: seq.charCodeAt(3) - 32 };
-
-  if (seq.length === 1) {
-    const code = seq.charCodeAt(0);
-    if (seq === "\r" || seq === "\n") return { name: "return" };
-    if (seq === "\x7f" || seq === "\b") return { name: "backspace" };
-    if (seq === "\t") return { name: "tab" };
-    if (seq === "\x1b") return { name: "escape" };
-    if (code === 1) return { name: "a", ctrl: true };
-    if (code === 3) return { name: "c", ctrl: true };
-    if (code === 4) return { name: "d", ctrl: true };
-    if (code === 5) return { name: "e", ctrl: true };
-    if (code < 32) return {};
-    return { str: seq };
-  }
-
-  if (seq.startsWith("\x1b[") || seq.startsWith("\x1bO")) {
-    const body = seq.slice(2);
-    const exact: Record<string, string> = {
-      A: "up", B: "down", C: "right", D: "left", H: "home", F: "end",
-      "1~": "home", "4~": "end", "5~": "pageup", "6~": "pagedown", "3~": "delete",
-    };
-    if (exact[body]) return { name: exact[body] };
-    const fin = seq[seq.length - 1]; // modified arrows like \x1b[1;5C
-    const arrows: Record<string, string> = { A: "up", B: "down", C: "right", D: "left", H: "home", F: "end" };
-    if (arrows[fin]) return { name: arrows[fin] };
-    return {};
-  }
-  if (seq.length === 2) return { meta: true, str: seq[1] };
-  return {};
-}
+import { type ParsedKey, extractSequences, parseSeq } from "./input.js";
+import { vlen, wrap } from "./text.js";
 
 export interface TuiCommand {
   name: string;
@@ -104,49 +21,12 @@ export interface TuiOptions {
   onSubmit: (line: string) => Promise<boolean>;
 }
 
-const ESC_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const MAX_POPUP = 6;
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
-// A multi-line or long paste collapses into this placeholder instead of flooding
-// the input; the real text is kept and expanded back on submit.
 const PASTE_LINE_LIMIT = 1;
 const PASTE_CHAR_LIMIT = 200;
-
-/** Visible length, ignoring ANSI escape sequences. */
-function vlen(s: string): number {
-  return s.replace(ESC_RE, "").length;
-}
-
-/** Hard-wrap a (possibly ANSI-styled) line to `width` visible columns. */
-function wrap(line: string, width: number): string[] {
-  if (width < 1 || vlen(line) <= width) return [line];
-  const out: string[] = [];
-  let cur = "";
-  let n = 0;
-  let i = 0;
-  while (i < line.length) {
-    if (line[i] === "\x1b") {
-      const m = line.slice(i).match(/^\x1b\[[0-9;?]*[A-Za-z]/);
-      if (m) {
-        cur += m[0];
-        i += m[0].length;
-        continue;
-      }
-    }
-    cur += line[i];
-    i++;
-    n++;
-    if (n >= width) {
-      out.push(cur);
-      cur = "";
-      n = 0;
-    }
-  }
-  if (cur) out.push(cur);
-  return out;
-}
 
 /**
  * A full-screen, alternate-buffer TUI compositor. It keeps the transcript in
@@ -168,31 +48,27 @@ export class Tui {
   private spinT0 = 0;
   private scheduled = false;
   private done = false;
-  private scroll = 0; // lines scrolled up from the bottom; 0 = pinned to latest
+  private scroll = 0;
   private lastBodyH = 10;
-  private inbuf = ""; // raw stdin accumulator for partial escape sequences
+  private inbuf = "";
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
-  private pasting = false; // inside a bracketed-paste block
-  private pasteBuf = ""; // accumulates paste content across chunks
-  private pastes = new Map<number, string>(); // id -> full pasted text
+  private pasting = false;
+  private pasteBuf = "";
+  private pastes = new Map<number, string>();
   private pasteCounter = 0;
-  // Modal picker (e.g. /models): when set, keys drive the list, not the editor.
   private overlay: { title: string; items: string[]; selected: number; resolve: (v: string | null) => void } | null = null;
-  // Cache the wrapped transcript so typing doesn't re-wrap the whole history each keystroke.
   private wrapCache: { w: number; len: number; lines: string[] } | null = null;
   private resolveDone: () => void = () => {};
 
   constructor(private opts: TuiOptions) {}
 
-  // ---- public API used by the host -----------------------------------------
+  // ---- public API ----------------------------------------------------------
 
-  /** Append output to the transcript (splitting multi-line strings). */
   print(s: string): void {
     for (const line of s.split("\n")) this.transcript.push(line);
     this.schedule();
   }
 
-  /** Show (or clear) an animated status line above the input box. */
   setStatus(text: string | null): void {
     if (text) {
       this.status = text;
@@ -213,7 +89,6 @@ export class Tui {
     this.schedule();
   }
 
-  /** Open a modal picker; resolves to the chosen item, or null if cancelled. */
   select(title: string, items: string[]): Promise<string | null> {
     if (!items.length) return Promise.resolve(null);
     return new Promise((resolve) => {
@@ -233,7 +108,6 @@ export class Tui {
     if (stdin.isTTY) stdin.setRawMode(true);
     stdin.setEncoding("utf8");
     stdin.resume();
-    // Alternate screen + SGR mouse reporting (wheel scroll) + bracketed paste.
     stdout.write("\x1b[?1049h\x1b[2J\x1b[?1000h\x1b[?1006h\x1b[?2004h");
     stdin.on("data", this.onData);
     stdout.on("resize", this.onResize);
@@ -275,7 +149,7 @@ export class Tui {
     }
     const dash = Math.max(0, w - 2);
     const { line: mid, col } = this.inputLine(w);
-    const inputOffset = lines.length + 1; // mid sits right after the top border
+    const inputOffset = lines.length + 1;
     lines.push(ui.magenta("╭" + "─".repeat(dash) + "╮"), mid, ui.magenta("╰" + "─".repeat(dash) + "╯"), this.footer(w));
     return { lines, inputOffset, col };
   }
@@ -330,14 +204,13 @@ export class Tui {
     const padCount = Math.max(0, bodyH - view.length);
     const screen = [...view, ...Array(padCount).fill(""), ...region.lines];
 
-    // Begin synchronized update, disable wrap, repaint from home.
     let out = "\x1b[?2026h\x1b[?7l\x1b[H";
     for (let r = 0; r < screen.length; r++) {
       out += screen[r] + "\x1b[K";
       if (r < screen.length - 1) out += "\n";
     }
     out += "\x1b[J";
-    const inputRow = bodyH + region.inputOffset + 1; // 1-indexed absolute row
+    const inputRow = bodyH + region.inputOffset + 1;
     out += `\x1b[${inputRow};${region.col}H`;
     out += "\x1b[?7h\x1b[?2026l";
     stdout.write(out);
@@ -381,7 +254,6 @@ export class Tui {
     this.drain();
   };
 
-  /** Pull out bracketed-paste blocks, then process the rest as keys. */
   private drain(): void {
     for (;;) {
       if (this.pasting) {
@@ -409,8 +281,6 @@ export class Tui {
     const { sequences, remainder } = extractSequences(this.inbuf);
     this.inbuf = remainder;
     for (const seq of sequences) this.handleKey(parseSeq(seq));
-    // A lone ESC has no follow-up; flush it shortly as the Escape key. Other
-    // partials (incl. a split paste marker) stay buffered until more bytes come.
     if (remainder === "\x1b") {
       this.flushTimer = setTimeout(() => {
         if (this.inbuf === "\x1b") {
@@ -431,7 +301,6 @@ export class Tui {
     this.cursor += s.length;
   }
 
-  /** A paste: small ones go inline; large/multi-line ones become a placeholder. */
   private handlePaste(raw: string): void {
     if (this.busy) return;
     const text = raw
@@ -453,7 +322,6 @@ export class Tui {
     this.render();
   }
 
-  /** Expand `[paste #N …]` placeholders back to their real content for submit. */
   private expandPastes(line: string): string {
     return line.replace(/\[paste #(\d+) (?:\+\d+ lines|\d+ chars)\]/g, (m, id) => {
       const content = this.pastes.get(Number(id));
@@ -462,15 +330,13 @@ export class Tui {
   }
 
   private handleKey(key: ParsedKey): void {
-    // Scrolling is allowed even while the agent is generating.
     if (key.mouse !== undefined) {
-      if (key.mouse & 64) this.scrollBy(key.mouse & 1 ? -3 : 3); // wheel: bit0 = down
-      return; // swallow all other mouse events so clicks never inject text
+      if (key.mouse & 64) this.scrollBy(key.mouse & 1 ? -3 : 3);
+      return;
     }
     if (key.name === "pageup") return this.scrollBy(Math.max(1, this.lastBodyH - 2));
     if (key.name === "pagedown") return this.scrollBy(-Math.max(1, this.lastBodyH - 2));
 
-    // A modal picker captures navigation while it's open (even during a command).
     if (this.overlay) {
       const n = this.overlay.items.length;
       if (key.name === "up") this.overlay.selected = (this.overlay.selected - 1 + n) % n;
@@ -493,17 +359,12 @@ export class Tui {
       return void this.submit();
     }
     if (key.ctrl && key.name === "c") {
-      if (this.buf) {
-        this.buf = "";
-        this.cursor = 0;
-      } else return this.teardown();
+      if (this.buf) { this.buf = ""; this.cursor = 0; }
+      else return this.teardown();
     } else if (key.ctrl && key.name === "d") {
       if (!this.buf) return this.teardown();
     } else if (key.name === "backspace") {
-      if (this.cursor > 0) {
-        this.buf = this.buf.slice(0, this.cursor - 1) + this.buf.slice(this.cursor);
-        this.cursor--;
-      }
+      if (this.cursor > 0) { this.buf = this.buf.slice(0, this.cursor - 1) + this.buf.slice(this.cursor); this.cursor--; }
     } else if (key.name === "left") {
       if (this.cursor > 0) this.cursor--;
     } else if (key.name === "right") {
@@ -519,11 +380,7 @@ export class Tui {
       if (ms.length) this.selected = (this.selected + 1) % ms.length;
       else this.recallHistory(1);
     } else if (key.name === "tab") {
-      if (ms.length) {
-        this.buf = "/" + ms[this.selected].name + " ";
-        this.cursor = this.buf.length;
-        this.selected = 0;
-      }
+      if (ms.length) { this.buf = "/" + ms[this.selected].name + " "; this.cursor = this.buf.length; this.selected = 0; }
     } else if (str && !key.ctrl && !key.meta && str.length === 1 && str >= " ") {
       this.buf = this.buf.slice(0, this.cursor) + str + this.buf.slice(this.cursor);
       this.cursor++;
@@ -534,13 +391,13 @@ export class Tui {
   }
 
   private async submit(): Promise<void> {
-    const shown = this.buf.trim(); // what the user sees, with [paste …] placeholders
-    const line = this.expandPastes(shown).trim(); // what the agent receives
+    const shown = this.buf.trim();
+    const line = this.expandPastes(shown).trim();
     this.buf = "";
     this.cursor = 0;
     this.selected = 0;
     this.histIdx = null;
-    this.scroll = 0; // jump back to the latest output on submit
+    this.scroll = 0;
     this.pastes.clear();
     if (shown) {
       this.history.push(shown);
@@ -567,7 +424,6 @@ export class Tui {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     stdin.off("data", this.onData);
     stdout.off("resize", this.onResize);
-    // Disable paste + mouse reporting, then leave the alternate screen.
     stdout.write("\x1b[?2004l\x1b[?1000l\x1b[?1006l\x1b[?2026l\x1b[?7h\x1b[?1049l");
     if (stdin.isTTY) stdin.setRawMode(false);
     stdin.pause();
