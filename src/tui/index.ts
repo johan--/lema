@@ -2,7 +2,7 @@ import { stdin, stdout } from "node:process";
 import * as ui from "../ui.js";
 import { type ParsedKey, extractSequences, parseSeq } from "./input.js";
 import { PasteBuffer, PASTE_START } from "./paste.js";
-import { buildFrame, matchCommands, type RenderState, type Overlay } from "./renderer.js";
+import { buildInputBox, matchCommands, type RenderState, type Overlay } from "./renderer.js";
 
 export interface TuiCommand {
   name: string;
@@ -20,8 +20,8 @@ export interface TuiOptions {
 
 export class Tui {
   private state: RenderState = {
-    transcript: [], buf: "", cursor: 0, scroll: 0, selected: 0,
-    status: null, spinFrame: 0, spinT0: 0, overlay: null, wrapCache: null,
+    buf: "", cursor: 0, selected: 0,
+    status: null, spinFrame: 0, spinT0: 0, overlay: null,
   };
   private history: string[] = [];
   private histIdx: number | null = null;
@@ -29,19 +29,21 @@ export class Tui {
   private spinTimer: ReturnType<typeof setInterval> | undefined;
   private scheduled = false;
   private done = false;
-  private lastBodyH = 10;
   private inbuf = "";
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private paste = new PasteBuffer();
   private resolveDone: () => void = () => {};
+  /** How many terminal lines the input box currently occupies. */
+  private lastInputH = 0;
 
   constructor(private opts: TuiOptions) {}
 
   // ---- public API ----------------------------------------------------------
 
   print(s: string): void {
-    for (const line of s.split("\n")) this.state.transcript.push(line);
-    this.schedule();
+    this.eraseInputBox();
+    for (const line of s.split("\n")) stdout.write(line + "\n");
+    this.drawInputBox();
   }
 
   setStatus(text: string | null): void {
@@ -68,22 +70,36 @@ export class Tui {
     if (stdin.isTTY) stdin.setRawMode(true);
     stdin.setEncoding("utf8");
     stdin.resume();
-    stdout.write("\x1b[?1049h\x1b[2J\x1b[?1007h\x1b[?2004h");
+    // Bracketed paste only; no alternate screen so terminal scrollback works normally.
+    stdout.write("\x1b[?2004h");
+    // Print header into the normal buffer.
+    for (const line of this.opts.header()) stdout.write(line + "\n");
     stdin.on("data", this.onData);
     stdout.on("resize", this.onResize);
-    this.render();
+    this.drawInputBox();
     await new Promise<void>((res) => (this.resolveDone = res));
   }
 
   // ---- rendering -----------------------------------------------------------
 
+  private eraseInputBox(): void {
+    if (this.lastInputH === 0) return;
+    // Move up to the first line of the input box and erase from there down.
+    stdout.write(`\x1b[${this.lastInputH}A\x1b[J`);
+    this.lastInputH = 0;
+  }
+
+  private drawInputBox(): void {
+    const w = Math.max(stdout.columns || 80, 24);
+    const { out, totalLines } = buildInputBox(this.opts, this.state, w);
+    this.lastInputH = totalLines;
+    stdout.write(out);
+  }
+
   private render(): void {
     if (this.done) return;
-    const w = Math.max(stdout.columns || 80, 24);
-    const rows = Math.max(stdout.rows || 24, 8);
-    const { out, bodyH } = buildFrame(this.opts, this.state, w, rows);
-    this.lastBodyH = bodyH;
-    stdout.write(out);
+    this.eraseInputBox();
+    this.drawInputBox();
   }
 
   private schedule(): void {
@@ -138,13 +154,6 @@ export class Tui {
     st.cursor += s.length;
   }
 
-  private scrollBy(delta: number): void {
-    const next = Math.max(0, this.state.scroll + delta);
-    if (next === this.state.scroll) return;
-    this.state.scroll = next;
-    this.render();
-  }
-
   private recallHistory(dir: number): void {
     if (!this.history.length) return;
     if (this.histIdx === null) this.histIdx = dir < 0 ? this.history.length - 1 : this.history.length;
@@ -156,8 +165,6 @@ export class Tui {
 
   private handleKey(key: ParsedKey): void {
     const st = this.state;
-    if (key.name === "pageup") return this.scrollBy(Math.max(1, this.lastBodyH - 2));
-    if (key.name === "pagedown") return this.scrollBy(-Math.max(1, this.lastBodyH - 2));
 
     if (st.overlay) {
       const ov = st.overlay as Overlay & { resolve(v: string | null): void };
@@ -187,11 +194,10 @@ export class Tui {
     else if (key.name === "right")   { if (st.cursor < st.buf.length) st.cursor++; }
     else if (key.name === "home" || (key.ctrl && key.name === "a")) { st.cursor = 0; }
     else if (key.name === "end"  || (key.ctrl && key.name === "e")) { st.cursor = st.buf.length; }
-    // up/down scroll the viewport (scroll wheel → arrows via ?1007h alternate scroll mode)
-    // command-popup navigation stays on up/down when popup is visible
-    else if (key.name === "up")   { if (ms.length) st.selected = (st.selected - 1 + ms.length) % ms.length; else return this.scrollBy(3); }
-    else if (key.name === "down") { if (ms.length) st.selected = (st.selected + 1) % ms.length; else return this.scrollBy(-3); }
-    // history navigation via Ctrl+P / Ctrl+N
+    // up/down navigate command popup; without popup they scroll terminal natively (no interception needed)
+    else if (key.name === "up")   { if (ms.length) st.selected = (st.selected - 1 + ms.length) % ms.length; else return; }
+    else if (key.name === "down") { if (ms.length) st.selected = (st.selected + 1) % ms.length; else return; }
+    // history via Ctrl+P / Ctrl+N
     else if (key.ctrl && key.name === "p") { this.recallHistory(-1); }
     else if (key.ctrl && key.name === "n") { this.recallHistory(1); }
     else if (key.name === "tab") {
@@ -206,7 +212,7 @@ export class Tui {
     const st = this.state;
     const shown = st.buf.trim();
     const line = this.paste.expand(shown).trim();
-    st.buf = ""; st.cursor = 0; st.selected = 0; st.scroll = 0;
+    st.buf = ""; st.cursor = 0; st.selected = 0;
     this.histIdx = null;
     this.paste.clear();
     if (shown) {
@@ -231,7 +237,8 @@ export class Tui {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     stdin.off("data", this.onData);
     stdout.off("resize", this.onResize);
-    stdout.write("\x1b[?2004l\x1b[?1007l\x1b[?2026l\x1b[?7h\x1b[?1049l");
+    this.eraseInputBox();
+    stdout.write("\x1b[?2004l");
     if (stdin.isTTY) stdin.setRawMode(false);
     stdin.pause();
     this.resolveDone();

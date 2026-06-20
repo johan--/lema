@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { matchCommands, buildFrame, buildInputLines, type RenderState } from "../../src/tui/renderer.js";
+import { matchCommands, buildInputBox, buildInputLines, type RenderState } from "../../src/tui/renderer.js";
 import type { TuiOptions } from "../../src/tui/index.js";
 
 const COMMANDS = [
@@ -47,16 +47,13 @@ describe("matchCommands", () => {
 
 function makeState(overrides: Partial<RenderState> = {}): RenderState {
   return {
-    transcript: [],
     buf: "",
     cursor: 0,
-    scroll: 0,
     selected: 0,
     status: null,
     spinFrame: 0,
     spinT0: 0,
     overlay: null,
-    wrapCache: null,
     ...overrides,
   };
 }
@@ -72,49 +69,42 @@ function makeOpts(overrides: Partial<TuiOptions> = {}): TuiOptions {
   };
 }
 
-describe("buildFrame", () => {
+describe("buildInputBox", () => {
   test("returns a non-empty string", () => {
-    const { out } = buildFrame(makeOpts(), makeState(), 80, 24);
+    const { out } = buildInputBox(makeOpts(), makeState(), 80);
     assert.ok(out.length > 0);
   });
 
   test("contains synchronized update escape", () => {
-    const { out } = buildFrame(makeOpts(), makeState(), 80, 24);
+    const { out } = buildInputBox(makeOpts(), makeState(), 80);
     assert.match(out, /\x1b\[\?2026h/);
   });
 
-  test("bodyH is non-negative", () => {
-    const { bodyH } = buildFrame(makeOpts(), makeState(), 80, 24);
-    assert.ok(bodyH >= 0);
+  test("totalLines is positive", () => {
+    const { totalLines } = buildInputBox(makeOpts(), makeState(), 80);
+    assert.ok(totalLines > 0);
   });
 
-  test("transcript lines appear in output", () => {
-    const state = makeState({ transcript: ["hello from transcript"] });
-    const { out } = buildFrame(makeOpts(), state, 80, 24);
-    assert.match(out, /hello from transcript/);
+  test("more input lines → larger totalLines", () => {
+    const stateShort = makeState({ buf: "hi", cursor: 2 });
+    const stateLong = makeState({ buf: "a".repeat(200), cursor: 200 });
+    const { totalLines: short } = buildInputBox(makeOpts(), stateShort, 40);
+    const { totalLines: long } = buildInputBox(makeOpts(), stateLong, 40);
+    assert.ok(long > short);
   });
 
-  test("populates wrapCache on state", () => {
-    const state = makeState({ transcript: ["line"] });
-    assert.equal(state.wrapCache, null);
-    buildFrame(makeOpts(), state, 80, 24);
-    assert.ok(state.wrapCache !== null);
+  test("status line appears when status is set", () => {
+    const state = makeState({ status: "thinking" });
+    const { out, totalLines } = buildInputBox(makeOpts(), state, 80);
+    assert.match(out, /thinking/);
+    const baseLines = buildInputBox(makeOpts(), makeState(), 80).totalLines;
+    assert.ok(totalLines > baseLines);
   });
 
-  test("reuses wrapCache when width and length unchanged", () => {
-    const state = makeState({ transcript: ["line"] });
-    buildFrame(makeOpts(), state, 80, 24);
-    const cache = state.wrapCache;
-    buildFrame(makeOpts(), state, 80, 24);
-    assert.equal(state.wrapCache, cache); // same object reference
-  });
-
-  test("rebuilds wrapCache on width change", () => {
-    const state = makeState({ transcript: ["line"] });
-    buildFrame(makeOpts(), state, 80, 24);
-    const cache = state.wrapCache;
-    buildFrame(makeOpts(), state, 100, 24);
-    assert.notEqual(state.wrapCache, cache);
+  test("command popup lines appear in output", () => {
+    const state = makeState({ buf: "/h", cursor: 2 });
+    const { out } = buildInputBox(makeOpts(), state, 80);
+    assert.match(out, /help/);
   });
 });
 
@@ -145,15 +135,14 @@ describe("buildInputLines", () => {
     assert.equal(cursorCol, 5 + 1); // 15 % 14 = 1
   });
 
-  test("text exactly 2× textArea wraps to three lines", () => {
-    // w=20 → textArea=14; buf length=28 fills lines 0,1,2 exactly the first two
+  test("text exactly 2× textArea produces two lines", () => {
+    // w=20 → textArea=14; buf length=28 fills two chunks exactly
     const buf = "a".repeat(28);
     const { lines } = buildInputLines(opts, buf, 0, 20);
     assert.equal(lines.length, 2);
   });
 
   test("cursor in the middle of first line", () => {
-    // w=20 → textArea=14; buf length=20, cursor=5
     const buf = "a".repeat(20);
     const { cursorRow, cursorCol } = buildInputLines(opts, buf, 5, 20);
     assert.equal(cursorRow, 0);
@@ -166,14 +155,5 @@ describe("buildInputLines", () => {
     const { cursorRow, cursorCol } = buildInputLines(opts, buf, 14, 20);
     assert.equal(cursorRow, 1);
     assert.equal(cursorCol, 5);
-  });
-
-  test("buildFrame grows with multi-line input (bodyH decreases)", () => {
-    const opts2 = makeOpts();
-    const stateShort = makeState({ buf: "hi", cursor: 2 });
-    const stateLong = makeState({ buf: "a".repeat(200), cursor: 200 });
-    const { bodyH: bodyShort } = buildFrame(opts2, stateShort, 40, 24);
-    const { bodyH: bodyLong } = buildFrame(opts2, stateLong, 40, 24);
-    assert.ok(bodyLong < bodyShort, "longer input should consume more rows, leaving fewer body rows");
   });
 });
