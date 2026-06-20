@@ -1,8 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { formatStats, runAgent, type AgentEvent } from "../src/agent/index.js";
-import type { ModelProvider } from "../src/provider.js";
-import type { ChatMessage, ChatResult } from "../src/models/chat.js";
+import type { ModelProvider, ChatResult } from "../src/provider.js";
 
 describe("formatStats", () => {
   test("formats all fields", () => {
@@ -20,7 +19,9 @@ describe("formatStats", () => {
   });
 });
 
-function makeProvider(replies: Array<{ content: string; toolCalls?: ChatMessage["tool_calls"] }>): ModelProvider {
+import type { ToolCall } from "../src/provider.js";
+
+function makeProvider(replies: Array<{ content: string | null; toolCalls?: ToolCall[] }>): ModelProvider {
   let call = 0;
   return {
     listModels: async () => ["test-model"],
