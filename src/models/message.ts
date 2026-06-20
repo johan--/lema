@@ -18,6 +18,8 @@ export interface ToolSchema {
     name: string;
     description: string;
     parameters: Record<string, unknown>;
+    /** Strict schema enforcement (constrained decoding). Server may ignore if unsupported. */
+    strict?: boolean;
   };
 }
 

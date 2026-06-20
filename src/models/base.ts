@@ -1,8 +1,15 @@
 import type { ChatMessage, Usage } from "./message.js";
 import type { ChatOptions, ChatResult, EmbedOptions } from "./chat.js";
 import type { ModelProvider } from "./provider.js";
+import { applyStrict, isStrictRejection } from "./grammar.js";
 
 export class BaseProvider implements ModelProvider {
+  /**
+   * Tri-state: undefined = not probed yet, true = strict supported,
+   * false = server rejected strict (fall back to plain tool calling).
+   */
+  private strictSupported: boolean | undefined = undefined;
+
   constructor(
     private cfg: {
       baseUrl: string;
@@ -44,18 +51,49 @@ export class BaseProvider implements ModelProvider {
 
   async chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<ChatResult> {
     const model = opts.model ?? await this.resolveModel();
-    const body: Record<string, unknown> = {
+    const base: Record<string, unknown> = {
       model,
       messages,
       temperature: opts.temperature ?? this.cfg.temperature,
       max_tokens: opts.maxTokens ?? this.cfg.maxTokens,
     };
-    if (opts.tools?.length) {
-      body.tools = opts.tools;
-      body.tool_choice = "auto";
+
+    if (!opts.tools?.length) {
+      const json = await this.post("/chat/completions", base, opts.signal);
+      return { message: json.choices[0].message as ChatMessage, usage: json.usage as Usage };
     }
-    const json = await this.post("/chat/completions", body, opts.signal);
-    return { message: json.choices[0].message as ChatMessage, usage: json.usage as Usage | undefined };
+
+    // With tools: try strict constrained decoding first (T3).
+    // On first call strictSupported is undefined → attempt strict.
+    // If the server rejects it (HTTP 400 / error mentioning "strict"), fall back
+    // to plain tool calling and cache the result for the rest of the session.
+    const useStrict = this.strictSupported !== false;
+    const tools = useStrict ? applyStrict(opts.tools) : opts.tools;
+
+    try {
+      const json = await this.post(
+        "/chat/completions",
+        { ...base, tools, tool_choice: "auto" },
+        opts.signal,
+      );
+      if (useStrict) this.strictSupported = true;
+      return { message: json.choices[0].message as ChatMessage, usage: json.usage as Usage };
+    } catch (err) {
+      if (useStrict && isStrictRejection(err)) {
+        // The error looks like a bad request — maybe strict was the cause. Retry
+        // once without it. Only cache strictSupported=false if the retry actually
+        // succeeds; if it fails too, strict wasn't the problem, so rethrow without
+        // disabling strict for the rest of the session.
+        const json = await this.post(
+          "/chat/completions",
+          { ...base, tools: opts.tools, tool_choice: "auto" },
+          opts.signal,
+        );
+        this.strictSupported = false;
+        return { message: json.choices[0].message as ChatMessage, usage: json.usage as Usage };
+      }
+      throw err;
+    }
   }
 
   async embed(texts: string[], opts: EmbedOptions = {}): Promise<number[][]> {

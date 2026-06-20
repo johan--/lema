@@ -101,9 +101,17 @@ works for top-tier models.
 - Size-based policy: whole vs search/replace.
 - Tests: unique-match required; ambiguous match returns a teaching error, not a wrong edit.
 
-### T3 — grammar-enforced schemas
-- Wire LM Studio structured output / GBNF in the provider so tool calls validate by
-  construction.
+### T3 — grammar-enforced schemas  ✅ (portability-only)
+- Provider adds `strict:true` to tool schemas, probes once, and falls back + caches if
+  the server rejects it ([grammar.ts](../src/models/grammar.ts), [base.ts](../src/models/base.ts)).
+- **Verified on LM Studio: accepted but NOT enforced** for tool calls (an out-of-enum
+  value slips through). It *is* enforced on llama.cpp (GBNF) and vLLM (guided decoding),
+  so we keep it as free portability and lean on LM Studio's native parser there.
+- **T3b (deferred): real constraint on LM Studio** would mean wrapping tool calls in
+  `response_format: json_schema` (which *is* enforced) plus handling the reasoning-model
+  `reasoning_content` quirk. Near-zero ROI today — our tool params are free-form strings
+  (paths, regexes, shell, code) with no enums to constrain. Revisit only when a tool
+  gains an enum or fixed-format param.
 
 ### T4 — dynamic retrieval + daily tools (= the breadth path)
 - Tool catalog with top-k retrieval per task; daily-use tools land here, behind it.
