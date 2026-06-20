@@ -2,6 +2,7 @@ import type { ModelProvider, ChatMessage } from "../provider.js";
 import { ALL_TOOLS, toolMap, type Tool } from "../tools/index.js";
 import { SkillStore } from "../skills/index.js";
 import { ContextManager } from "../context/index.js";
+import { parseTextToolCalls } from "./toolparse.js";
 const SYSTEM = `You are lema, a focused local coding agent running on a small local model.
 You operate inside the user's working directory through tools.
 
@@ -151,6 +152,16 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
       ctxTok = usage.total_tokens ?? ctxTok;
       ctx.updateUsage(ctxTok);
     }
+    // Recover tool calls the model emitted as plain text (small models on
+    // LM Studio often do this when the server fails to parse their tool syntax).
+    if (!reply.tool_calls?.length && reply.content) {
+      const recovered = parseTextToolCalls(reply.content);
+      if (recovered.length) {
+        reply.tool_calls = recovered;
+        reply.content = null; // the text was a tool call, not a final answer
+      }
+    }
+
     ctx.push(reply);
 
     if (!reply.tool_calls?.length) {

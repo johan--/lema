@@ -98,6 +98,20 @@ describe("runAgent", () => {
     assert.equal(result.answer, "answer from cache");
   });
 
+  test("recovers a tool call emitted as plain text", async () => {
+    let runs = 0;
+    const readTool = {
+      schema: { type: "function" as const, function: { name: "read_file", description: "", parameters: {} } },
+      run: async () => { runs++; return "contents"; },
+    };
+    // First reply has no structured tool_calls — the call is buried in content.
+    const textCall = { content: "<tool_call><function=read_file><parameter=path>x.ts</parameter></function></tool_call>" };
+    const provider = makeProvider([textCall, { content: "done" }]);
+    const result = await runAgent("read x", { maxSteps: 5, provider, cwd: "/tmp", tools: [readTool] });
+    assert.equal(runs, 1); // the text tool call was parsed and executed
+    assert.equal(result.answer, "done");
+  });
+
   test("transcript includes system + user messages", async () => {
     const provider = makeProvider([{ content: "hi" }]);
     const result = await runAgent("hello", { maxSteps: 5, provider, cwd: "/tmp", tools: [] });
