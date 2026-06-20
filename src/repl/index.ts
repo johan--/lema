@@ -7,6 +7,7 @@ import type { ModelProvider } from "../provider.js";
 import { SkillStore } from "../skills/index.js";
 import { runAgent, formatStats, type AgentStats, type AgentEvent } from "../agent/index.js";
 import { ContextManager } from "../context/index.js";
+import { getTools, type Tool } from "../tools/index.js";
 import { Tui, type TuiCommand } from "../tui/index.js";
 import { renderMarkdown } from "../tui/markdown.js";
 
@@ -31,6 +32,7 @@ interface Session {
   provider: ModelProvider;
   skills: SkillStore;
   context: ContextManager;
+  tools: Tool[];
   /** Called with the stats of each completed run (the TUI shows them in the footer). */
   onStats?: (s: AgentStats) => void;
   /** Renderer for agent events (the TUI swaps in its own; batch uses the console). */
@@ -39,6 +41,8 @@ interface Session {
   select?: (title: string, items: string[]) => Promise<string | null>;
   /** Switch the active model and update the footer. */
   setModel?: (id: string) => void;
+  /** Enable/disable the built-in web tools for this session. */
+  setWeb?: (on: boolean) => void;
 }
 
 /** A slash command. Adding one must not require touching the REPL loop (open/closed). */
@@ -84,6 +88,18 @@ const COMMANDS: SlashCommand[] = [
     run: async (s) => {
       const models = await s.provider.listModels();
       ui.ok(`server up at ${s.baseUrl} — ${models.length} model(s)`);
+    },
+  },
+  {
+    name: "web",
+    desc: "toggle built-in web search (on/off)",
+    run: (s, arg) => {
+      if (!s.setWeb) return ui.warn("web toggle is unavailable here");
+      const on = s.tools.some((t) => t.schema.function.name === "web_search");
+      const want = arg.trim() ? /^(on|true|1|yes)$/i.test(arg.trim()) : !on;
+      s.setWeb(want);
+      ui.ok(`web search ${want ? "on" : "off"}`);
+      if (want) ui.log(ui.dim('  add "tools": { "web": true } to lema.config.json to make it permanent'));
     },
   },
   { name: "cwd", desc: "print the working directory", run: () => ui.log("  " + process.cwd()) },
@@ -184,6 +200,7 @@ async function runTask(session: Session, task: string, signal?: AbortSignal): Pr
     cwd: process.cwd(),
     skills: session.skills,
     context: session.context,
+    tools: session.tools,
     signal,
     onEvent: (e) => {
       render(e);
@@ -230,6 +247,7 @@ export async function startRepl(cfg: LemaConfig, provider: ModelProvider): Promi
     provider,
     skills: new SkillStore(cfg, provider),
     context: new ContextManager({ budget: cfg.context }),
+    tools: getTools(cfg),
   };
   const model = await provider.resolveModel().catch(() => "(no model loaded)");
 
@@ -261,6 +279,10 @@ export async function startRepl(cfg: LemaConfig, provider: ModelProvider): Promi
   session.setModel = (id) => {
     cfg.model = id;
     footerRight = `${id} · local`;
+  };
+  session.setWeb = (on) => {
+    cfg.tools = { ...cfg.tools, web: on };
+    session.tools = getTools(cfg);
   };
   ui.setSink((s) => tui.print(s));
   try {
