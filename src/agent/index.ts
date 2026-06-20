@@ -51,6 +51,41 @@ export interface RunOptions {
   context?: ContextManager;
 }
 
+/** Tools with no side effects — repeating one with identical args is wasted work. */
+const READ_ONLY = new Set(["read_file", "list_dir", "grep", "glob", "web_search", "web_fetch"]);
+/** After this many repeated identical calls, the model is spinning — wrap up. */
+const REPEAT_BUDGET = 3;
+
+/** A stable signature for a tool call, used to detect exact repeats. */
+function callSig(name: string, args: Record<string, any>): string {
+  return `${name}:${JSON.stringify(args)}`;
+}
+
+/**
+ * Ask the model for a final answer with NO tools available, so it must respond
+ * from what it has already gathered instead of looping. Salvages a run that hit
+ * the step budget or started spinning, rather than discarding all the work.
+ */
+async function forceFinish(
+  provider: ModelProvider,
+  ctx: ContextManager,
+  model: string,
+  note: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  ctx.push({
+    role: "system",
+    content: `${note} Give your best final answer now using what you've already gathered. Do not call any tools.`,
+  });
+  try {
+    const { message } = await provider.chat(ctx.render(), { model, signal });
+    ctx.push(message);
+    return message.content ?? "";
+  } catch {
+    return "Stopped before reaching a conclusion.";
+  }
+}
+
 /** Run the agent loop on a single task until it stops calling tools or hits maxSteps. */
 export async function runAgent(task: string, opts: RunOptions): Promise<AgentResult> {
   const { maxSteps, provider, cwd } = opts;
@@ -85,6 +120,8 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
   ctx.push({ role: "user", content: task });
 
   const schemas = tools.map((t) => t.schema);
+  const seen = new Map<string, string>(); // call signature -> result (dedupe cache)
+  let repeats = 0;
   let steps = 0;
   let promptTok = 0;
   let completionTok = 0;
@@ -135,6 +172,19 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
         ctx.push({ role: "tool", tool_call_id: call.id, content: result });
         continue;
       }
+      const sig = callSig(call.function.name, args);
+      // Exact repeat of a read-only call: don't re-run it. Return the prior
+      // result with a nudge so the model uses what it has instead of spinning.
+      if (READ_ONLY.has(call.function.name) && seen.has(sig)) {
+        repeats++;
+        emit({ type: "tool", tool: call.function.name, detail: "(repeat — cached)" });
+        ctx.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: `${seen.get(sig)}\n\n(You already ran this exact call — result repeated above. Stop repeating; use it or give your final answer.)`,
+        });
+        continue;
+      }
       emit({ type: "tool", tool: call.function.name, detail: summarizeArgs(args) });
       if (!tool) {
         result = `ERROR: unknown tool ${call.function.name}`;
@@ -145,12 +195,23 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
           result = `ERROR: ${(e as Error).message}`;
         }
       }
+      if (READ_ONLY.has(call.function.name)) seen.set(sig, result);
       ctx.push({ role: "tool", tool_call_id: call.id, content: result });
+    }
+
+    // Too many repeated calls means the model is stuck — finish gracefully.
+    if (repeats >= REPEAT_BUDGET) {
+      const answer = await forceFinish(provider, ctx, model, "You are repeating tool calls.", opts.signal);
+      emit({ type: "done", text: answer, stats: stats() });
+      return { answer, steps, transcript: ctx.render() };
     }
   }
 
-  emit({ type: "done", text: "(stopped: hit maxSteps)", stats: stats() });
-  return { answer: "Stopped after reaching the step limit.", steps, transcript: ctx.render() };
+  // Hit the step budget: don't throw the work away — force a final answer with
+  // no tools so the model concludes from everything it has gathered.
+  const answer = await forceFinish(provider, ctx, model, "You have reached the step limit.", opts.signal);
+  emit({ type: "done", text: answer, stats: stats() });
+  return { answer, steps, transcript: ctx.render() };
 }
 
 function summarizeArgs(args: Record<string, any>): string {

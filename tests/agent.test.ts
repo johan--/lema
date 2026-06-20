@@ -69,16 +69,33 @@ describe("runAgent", () => {
     assert.equal(typeof stats!.tokps, "number");
   });
 
-  test("stops after maxSteps", async () => {
-    // Provider always replies with a tool call — agent must hit the step limit.
+  test("stops after maxSteps and forces a final answer", async () => {
+    // First two calls keep requesting a tool; once the budget is hit the agent
+    // makes one tool-less call (forceFinish), which returns this final answer.
     const toolCall = {
       content: null,
       toolCalls: [{ id: "1", type: "function" as const, function: { name: "unknown_tool", arguments: "{}" } }],
     };
-    const provider = makeProvider([toolCall]);
+    const provider = makeProvider([toolCall, toolCall, { content: "Best effort summary." }]);
     const result = await runAgent("loop", { maxSteps: 2, provider, cwd: "/tmp", tools: [] });
     assert.equal(result.steps, 2);
-    assert.match(result.answer, /step limit/i);
+    assert.equal(result.answer, "Best effort summary."); // work salvaged, not discarded
+  });
+
+  test("dedupes repeated read-only calls and finishes", async () => {
+    let runs = 0;
+    const readTool = {
+      schema: { type: "function" as const, function: { name: "read_file", description: "", parameters: {} } },
+      run: async () => { runs++; return "file contents"; },
+    };
+    const tc = {
+      content: null,
+      toolCalls: [{ id: "1", type: "function" as const, function: { name: "read_file", arguments: "{}" } }],
+    };
+    const provider = makeProvider([tc, tc, tc, tc, { content: "answer from cache" }]);
+    const result = await runAgent("loop", { maxSteps: 10, provider, cwd: "/tmp", tools: [readTool] });
+    assert.equal(runs, 1); // executed once; repeats were short-circuited
+    assert.equal(result.answer, "answer from cache");
   });
 
   test("transcript includes system + user messages", async () => {
