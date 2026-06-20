@@ -91,18 +91,11 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
-    name: "web",
-    desc: "toggle built-in web search (on/off)",
-    run: (s, arg) => {
-      if (!s.setWeb) return ui.warn("web toggle is unavailable here");
-      const on = s.tools.some((t) => t.schema.function.name === "web_search");
-      const want = arg.trim() ? /^(on|true|1|yes)$/i.test(arg.trim()) : !on;
-      s.setWeb(want);
-      ui.ok(`web search ${want ? "on" : "off"}`);
-      if (want) ui.log(ui.dim('  add "tools": { "web": true } to lema.config.json to make it permanent'));
-    },
+    name: "settings",
+    aliases: ["set"],
+    desc: "view settings or change one: web, cwd, ping",
+    run: (s, arg) => runSettings(s, arg),
   },
-  { name: "cwd", desc: "print the working directory", run: () => ui.log("  " + process.cwd()) },
   {
     name: "clear",
     desc: "clear the screen",
@@ -112,6 +105,51 @@ const COMMANDS: SlashCommand[] = [
   },
   { name: "exit", aliases: ["quit", "q"], desc: "quit lema", run: () => true },
 ];
+
+/** Sub-commands under /settings. Adding one needs no change to the dispatcher. */
+const SETTINGS: SlashCommand[] = [
+  {
+    name: "web",
+    desc: "toggle built-in web search (on/off)",
+    run: (s, arg) => {
+      if (!s.setWeb) return ui.warn("web toggle is unavailable here");
+      const on = s.tools.some((t) => t.schema.function.name === "web_search");
+      const want = arg.trim() ? /^(on|true|1|yes)$/i.test(arg.trim()) : !on;
+      s.setWeb(want);
+      ui.ok(`web search ${want ? "on" : "off"}`);
+    },
+  },
+  { name: "cwd", desc: "print the working directory", run: () => ui.log("  " + process.cwd()) },
+  {
+    name: "ping",
+    desc: "check the server is reachable",
+    run: async (s) => {
+      const models = await s.provider.listModels();
+      ui.ok(`server up at ${s.baseUrl} — ${models.length} model(s)`);
+    },
+  },
+];
+
+const SETTINGS_INDEX = new Map<string, SlashCommand>(
+  SETTINGS.flatMap((c) => [c.name, ...(c.aliases ?? [])].map((n) => [n, c] as const)),
+);
+
+/** Show the settings panel, or run a settings sub-command like `web on`. */
+async function runSettings(s: Session, arg: string): Promise<void> {
+  const [name, ...rest] = arg.trim().split(/\s+/);
+  if (!name) {
+    const webOn = s.tools.some((t) => t.schema.function.name === "web_search");
+    ui.log(ui.dim("  settings:"));
+    ui.log(`    ${"web".padEnd(8)} ${webOn ? ui.green("on") : ui.dim("off")}`);
+    ui.log(`    ${"cwd".padEnd(8)} ${ui.dim(process.cwd())}`);
+    ui.log(`    ${"server".padEnd(8)} ${ui.dim(s.baseUrl)}`);
+    ui.log(ui.dim("  change one:  /settings web on|off · /settings ping"));
+    return;
+  }
+  const cmd = SETTINGS_INDEX.get(name.toLowerCase());
+  if (!cmd) return ui.warn(`unknown setting: ${name} — try /settings`);
+  await cmd.run(s, rest.join(" "));
+}
 
 const COMMAND_INDEX = new Map<string, SlashCommand>(
   COMMANDS.flatMap((c) => [c.name, ...(c.aliases ?? [])].map((n) => [n, c] as const)),
