@@ -134,21 +134,42 @@ const SETTINGS_INDEX = new Map<string, SlashCommand>(
   SETTINGS.flatMap((c) => [c.name, ...(c.aliases ?? [])].map((n) => [n, c] as const)),
 );
 
+const webOn = (s: Session) => s.tools.some((t) => t.schema.function.name === "web_search");
+
 /** Show the settings panel, or run a settings sub-command like `web on`. */
 async function runSettings(s: Session, arg: string): Promise<void> {
   const [name, ...rest] = arg.trim().split(/\s+/);
-  if (!name) {
-    const webOn = s.tools.some((t) => t.schema.function.name === "web_search");
-    ui.log(ui.dim("  settings:"));
-    ui.log(`    ${"web".padEnd(8)} ${webOn ? ui.green("on") : ui.dim("off")}`);
-    ui.log(`    ${"cwd".padEnd(8)} ${ui.dim(process.cwd())}`);
-    ui.log(`    ${"server".padEnd(8)} ${ui.dim(s.baseUrl)}`);
-    ui.log(ui.dim("  change one:  /settings web on|off · /settings ping"));
-    return;
+  if (name) {
+    const cmd = SETTINGS_INDEX.get(name.toLowerCase());
+    if (!cmd) return ui.warn(`unknown setting: ${name} — try /settings`);
+    return void (await cmd.run(s, rest.join(" ")));
   }
-  const cmd = SETTINGS_INDEX.get(name.toLowerCase());
-  if (!cmd) return ui.warn(`unknown setting: ${name} — try /settings`);
-  await cmd.run(s, rest.join(" "));
+  // Interactive radio-style menu in the TUI; plain panel everywhere else.
+  if (s.select) return settingsMenu(s);
+
+  ui.log(ui.dim("  settings:"));
+  ui.log(`    ${"web".padEnd(8)} ${webOn(s) ? ui.green("on") : ui.dim("off")}`);
+  ui.log(`    ${"cwd".padEnd(8)} ${ui.dim(process.cwd())}`);
+  ui.log(`    ${"server".padEnd(8)} ${ui.dim(s.baseUrl)}`);
+  ui.log(ui.dim("  change one:  /settings web on|off · /settings ping"));
+}
+
+/** Modal settings menu: Enter on "web search" flips it; the menu re-opens with fresh state. */
+async function settingsMenu(s: Session): Promise<void> {
+  const WEB = 0, PING = 1, CLOSE = 2;
+  for (;;) {
+    const items = [
+      `web search   ${webOn(s) ? "● on" : "○ off"}`,
+      "ping server",
+      "close",
+    ];
+    const pick = await s.select!("Settings  (↑/↓ · Enter · Esc)", items);
+    if (pick === null) return;
+    const idx = items.indexOf(pick);
+    if (idx === CLOSE) return;
+    if (idx === WEB) { s.setWeb?.(!webOn(s)); continue; }
+    if (idx === PING) { await SETTINGS_INDEX.get("ping")!.run(s, ""); return; }
+  }
 }
 
 const COMMAND_INDEX = new Map<string, SlashCommand>(
