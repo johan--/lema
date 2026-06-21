@@ -138,6 +138,7 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
   const schemas = tools.map((t) => t.schema);
   const seen = new Map<string, string>(); // call signature -> result (dedupe cache)
   let repeats = 0;
+  let verified = false; // ultra: has the one tool-grounded verify pass run yet?
   let steps = 0;
   let promptTok = 0;
   let completionTok = 0;
@@ -180,6 +181,21 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
     ctx.push(reply);
 
     if (!reply.tool_calls?.length) {
+      // Ultra: gate the first finish behind one tool-grounded verify pass. The
+      // model self-verifies poorly but verifies well with tools; one sequential
+      // refine round beats wide sampling on a small local model.
+      if (profile.verify && !verified) {
+        verified = true;
+        emit({ type: "step", text: "verifying" });
+        ctx.push({
+          role: "system",
+          content:
+            "Before this is accepted: verify the above with tools — run the tests/build, " +
+            "re-read changed files, confirm with grep. If anything is wrong, fix it and re-verify. " +
+            "If it is already correct and verified, repeat your final answer.",
+        });
+        continue;
+      }
       const answer = reply.content ?? "";
       emit({ type: "done", text: answer, stats: stats() });
       return { answer, steps, transcript: ctx.render() };

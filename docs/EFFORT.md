@@ -36,13 +36,39 @@ is deferred — powerful but needs a difficulty heuristic.
 
 `effort` scales the user's configured `maxSteps`/`maxTokens` (which define *medium*):
 
-| effort | maxSteps | maxTokens | prompt hint | native thinking |
-|--------|----------|-----------|-------------|-----------------|
-| **low** | ~½ (min 4) | ~½ (min 512) | "answer concisely, most direct path, avoid extra tool calls" | off |
-| **medium** (default) | base | base | none | off / auto |
-| **high** | ~2× | ~2× | "plan steps, verify with tools, double-check" | on when supported |
+| effort | maxSteps | maxTokens | prompt hint | verify gate |
+|--------|----------|-----------|-------------|-------------|
+| **low** | ~½ (min 4) | ~½ (min 512) | "answer concisely, most direct path, avoid extra tool calls" | — |
+| **medium** (default) | base | base | none | — |
+| **high** | ~2× | ~2× | "plan steps, verify with tools, double-check" | — |
+| **ultra** | ~3× | ~2× | mandatory tool-grounded verification | ✓ |
 
 Medium = exactly today's behaviour, so existing configs are unchanged.
+
+## Ultra — verification, not more thinking
+
+Ultra is the maximal mode, designed around what actually scales a *small* model's quality
+at test time — which is **not** a longer monologue (that triggers overthinking and even
+inverse scaling). The evidence:
+
+- **SLMs self-verify poorly but verify well with tools.** Tool use is its own axis of
+  test-time scaling; offload checking to the tools (run tests, re-read, grep) rather than
+  asking the model to re-check in its head ([T1, arXiv 2504.04718](https://arxiv.org/pdf/2504.04718)).
+- **Sequential refine beats wide sampling.** One "generate → verify → fix" round (K=8
+  sequential) outperforms parallel best-of-N at K=32 — ~4× more compute-efficient, which
+  matters enormously at ~10 tok/s locally. So ultra does **not** do best-of-N sampling.
+
+So ultra makes two changes over high:
+1. **Scale steps, not tokens.** 3× steps (room for a verify-and-fix round), tokens stay at
+   2× — more *tool actions*, not more *thinking*.
+2. **A verify gate.** The first time the model tries to finish, the agent injects one
+   verification instruction and continues the loop; only the *second* finish is accepted.
+   That's a single sequential self-refine round, grounded in tools. Implemented in
+   [agent/index.ts](../src/agent/index.js) with a `verified` flag so it fires exactly once.
+
+Deliberately **not** in ultra: parallel best-of-N / self-consistency sampling (too slow
+locally and less efficient than sequential refine), and unbounded token budgets (invite
+overthinking). Revisit best-of-N only if a fast batch path ever exists.
 
 ## Architecture
 
@@ -120,3 +146,7 @@ A first-class command (not tucked under `/settings`):
   [Inverse Scaling in Test-Time Compute (2507.14417)](https://arxiv.org/pdf/2507.14417).
 - [Plan and Budget (2505.16122)](https://arxiv.org/abs/2505.16122);
   [Reasoning on a Budget — survey (2507.02076)](https://arxiv.org/html/2507.02076v1).
+- [T1: Tool-integrated Self-verification for SLMs (2504.04718)](https://arxiv.org/pdf/2504.04718)
+  — small models verify with tools, not in-head; basis for the ultra verify gate.
+- Understanding parallel vs sequential sampling (2604.05868); SETS (2501.19306) — sequential
+  self-refine outperforms wide best-of-N, so ultra uses one sequential round, not sampling.

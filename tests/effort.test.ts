@@ -32,14 +32,29 @@ describe("effortProfile", () => {
     assert.equal(p.maxTokens, 512); // min 512, not 300
   });
 
+  test("ultra triples steps, doubles tokens, and requires verification", () => {
+    const p = effortProfile("ultra", base);
+    assert.equal(p.maxSteps, 36);   // steps scale most (room for a verify pass)
+    assert.equal(p.maxTokens, 4096); // tokens only 2x — not a thinking blowout
+    assert.equal(p.verify, true);
+    assert.match(p.hint, /verify/i);
+  });
+
+  test("non-ultra levels do not require verification", () => {
+    for (const e of ["low", "medium", "high"] as const) {
+      assert.equal(effortProfile(e, base).verify, false);
+    }
+  });
+
   test("unknown effort falls back to medium", () => {
     const p = effortProfile("turbo" as never, base);
     assert.equal(p.maxSteps, 12);
     assert.equal(p.maxTokens, 2048);
     assert.equal(p.hint, "");
+    assert.equal(p.verify, false);
   });
 
-  test("EFFORTS lists the three levels", () => {
-    assert.deepEqual([...EFFORTS], ["low", "medium", "high"]);
+  test("EFFORTS lists the four levels", () => {
+    assert.deepEqual([...EFFORTS], ["low", "medium", "high", "ultra"]);
   });
 });

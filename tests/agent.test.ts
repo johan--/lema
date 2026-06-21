@@ -112,6 +112,38 @@ describe("runAgent", () => {
     assert.equal(result.answer, "done");
   });
 
+  test("ultra gates the first finish behind a verify pass", async () => {
+    // The model would finish immediately, but ultra forces one more turn first.
+    let calls = 0;
+    const provider: ModelProvider = {
+      listModels: async () => ["test-model"],
+      resolveModel: async () => "test-model",
+      embed: async (t) => t.map(() => []),
+      chat: async () => {
+        calls++;
+        return {
+          message: { role: "assistant", content: `answer ${calls}`, tool_calls: undefined },
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        };
+      },
+    };
+    const result = await runAgent("do it", { maxSteps: 5, provider, cwd: "/tmp", tools: [], effort: "ultra" });
+    assert.equal(calls, 2); // first finish was gated, model asked to verify, then accepted
+    assert.equal(result.answer, "answer 2");
+  });
+
+  test("medium accepts the first finish (no verify gate)", async () => {
+    let calls = 0;
+    const provider: ModelProvider = {
+      listModels: async () => ["test-model"],
+      resolveModel: async () => "test-model",
+      embed: async (t) => t.map(() => []),
+      chat: async () => { calls++; return { message: { role: "assistant", content: "done" }, usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }; },
+    };
+    await runAgent("do it", { maxSteps: 5, provider, cwd: "/tmp", tools: [], effort: "medium" });
+    assert.equal(calls, 1);
+  });
+
   test("transcript includes system + user messages", async () => {
     const provider = makeProvider([{ content: "hi" }]);
     const result = await runAgent("hello", { maxSteps: 5, provider, cwd: "/tmp", tools: [] });
