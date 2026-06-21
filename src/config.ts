@@ -28,6 +28,8 @@ export interface LemaConfig {
   check?: string;
   /** Reliability engine flags. `verify` follows effort by default. */
   reliability: { verify: "auto" | "on" | "off" };
+  /** Project-rules loading (AGENTS.md/CLAUDE.md/.lema/rules.md) + re-injection. */
+  rules: { enabled: boolean; reinject: boolean; reinjectEvery: number };
 }
 
 export const DEFAULTS: LemaConfig = {
@@ -40,6 +42,7 @@ export const DEFAULTS: LemaConfig = {
   tools: { web: true },
   effort: "medium",
   reliability: { verify: "auto" },
+  rules: { enabled: true, reinject: true, reinjectEvery: 6 },
   context: BUDGET_DEFAULTS,
 };
 
@@ -56,10 +59,12 @@ export function loadConfig(cwd = process.cwd()): LemaConfig {
       const context = { ...cfg.context, ...raw.context };
       const tools = { ...cfg.tools, ...raw.tools };
       const reliability = { ...cfg.reliability, ...raw.reliability };
+      const rules = { ...cfg.rules, ...raw.rules };
       Object.assign(cfg, raw);
       cfg.context = context;
       cfg.tools = tools;
       cfg.reliability = reliability;
+      cfg.rules = rules;
     } catch (err) {
       throw new Error(`Failed to parse lema.config.json: ${(err as Error).message}`);
     }

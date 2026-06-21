@@ -156,4 +156,33 @@ describe("ContextManager", () => {
     const rendered = ctx.render();
     assert.ok(rendered[0].content?.startsWith("[output hidden"));
   });
+
+  const rules = { full: "FULL RULES", condensed: "• rule", reinject: true, reinjectEvery: 2 };
+
+  it("injects the full rules as a start anchor after the system prompt", () => {
+    const ctx = new ContextManager({ rules: { ...rules, reinject: false } });
+    ctx.push({ role: "system", content: "SYSTEM" });
+    ctx.push({ role: "user", content: "hi" });
+    const out = ctx.render();
+    assert.equal(out[0].content, "SYSTEM");
+    assert.equal(out[1].content, "FULL RULES"); // rules right after system
+    assert.equal(out[2].content, "hi");
+  });
+
+  it("re-injects a condensed reminder on the reinjectEvery cadence", () => {
+    const ctx = new ContextManager({ rules });
+    ctx.push({ role: "system", content: "SYSTEM" });
+    ctx.push({ role: "user", content: "hi" });
+    ctx.render(); // renderCount 1 → no reminder (1 % 2 !== 0)
+    const out = ctx.render(); // renderCount 2 → reminder appended
+    assert.match(out[out.length - 1].content ?? "", /Reminder of the project rules/);
+    assert.match(out[out.length - 1].content ?? "", /• rule/);
+  });
+
+  it("no rules ⇒ output unchanged", () => {
+    const ctx = new ContextManager();
+    ctx.push({ role: "system", content: "SYSTEM" });
+    ctx.push({ role: "user", content: "hi" });
+    assert.equal(ctx.render().length, 2);
+  });
 });

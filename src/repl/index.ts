@@ -10,6 +10,7 @@ import { ContextManager } from "../context/index.js";
 import { getTools, type Tool } from "../tools/index.js";
 import { EFFORT_SETTINGS, type EffortSetting } from "../effort.js";
 import { discoverCheck, makeVerifier, type Verifier } from "../verify/index.js";
+import { loadRulesPreamble } from "../rules/index.js";
 import { Tui, type TuiCommand } from "../tui/index.js";
 import { renderMarkdown } from "../tui/markdown.js";
 
@@ -35,6 +36,8 @@ interface Session {
   effort: EffortSetting;
   verify: "auto" | "on" | "off";
   verifier?: Verifier;
+  /** The project rules file in effect this session, if any (for /settings). */
+  rulesPath?: string;
   provider: ModelProvider;
   skills: SkillStore;
   context: ContextManager;
@@ -183,6 +186,7 @@ async function runSettings(s: Session, arg: string): Promise<void> {
   ui.log(ui.dim("  settings:"));
   ui.log(`    ${"web".padEnd(8)} ${webOn(s) ? ui.green("on") : ui.dim("off")}`);
   ui.log(`    ${"verify".padEnd(8)} ${s.verify}  ${ui.dim("· " + check)}`);
+  ui.log(`    ${"rules".padEnd(8)} ${s.rulesPath ? ui.green(s.rulesPath) : ui.dim("none found")}`);
   ui.log(`    ${"effort".padEnd(8)} ${s.effort}`);
   ui.log(`    ${"cwd".padEnd(8)} ${ui.dim(process.cwd())}`);
   ui.log(`    ${"server".padEnd(8)} ${ui.dim(s.baseUrl)}`);
@@ -347,6 +351,7 @@ async function runBatch(session: Session): Promise<void> {
 /** Start the interactive session. Bare `lema` lands here. */
 export async function startRepl(cfg: LemaConfig, provider: ModelProvider): Promise<void> {
   const checkCmd = discoverCheck(process.cwd(), cfg.check);
+  const loadedRules = loadRulesPreamble(process.cwd(), cfg.rules);
   const session: Session = {
     baseUrl: cfg.baseUrl,
     maxSteps: cfg.maxSteps,
@@ -354,9 +359,10 @@ export async function startRepl(cfg: LemaConfig, provider: ModelProvider): Promi
     effort: cfg.effort,
     verify: cfg.reliability.verify,
     verifier: checkCmd ? makeVerifier(checkCmd) : undefined,
+    rulesPath: loadedRules?.path,
     provider,
     skills: new SkillStore(cfg, provider),
-    context: new ContextManager({ budget: cfg.context }),
+    context: new ContextManager({ budget: cfg.context, rules: loadedRules?.preamble }),
     tools: getTools(cfg),
   };
   const model = await provider.resolveModel().catch(() => "(no model loaded)");

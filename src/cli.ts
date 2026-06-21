@@ -6,6 +6,8 @@ import { runAgent } from "./agent/index.js";
 import { startRepl, consoleRenderer } from "./repl/index.js";
 import { getTools } from "./tools/index.js";
 import { discoverCheck, makeVerifier } from "./verify/index.js";
+import { loadRulesPreamble } from "./rules/index.js";
+import { ContextManager } from "./context/index.js";
 import * as ui from "./ui.js";
 
 const HELP = `${ui.bold("lema")} — a local, self-improving agentic CLI
@@ -74,7 +76,9 @@ async function main() {
   const store = new SkillStore(cfg, provider);
   const checkCmd = discoverCheck(process.cwd(), cfg.check);
   const verifier = checkCmd ? makeVerifier(checkCmd) : undefined;
-  await runAgent(task, { maxSteps: cfg.maxSteps, maxTokens: cfg.maxTokens, effort: cfg.effort, provider, cwd: process.cwd(), skills: store, tools: getTools(cfg), verifier, verify: cfg.reliability.verify, onEvent: consoleRenderer });
+  const loadedRules = loadRulesPreamble(process.cwd(), cfg.rules);
+  const context = new ContextManager({ budget: cfg.context, rules: loadedRules?.preamble });
+  await runAgent(task, { maxSteps: cfg.maxSteps, maxTokens: cfg.maxTokens, effort: cfg.effort, provider, cwd: process.cwd(), skills: store, tools: getTools(cfg), verifier, verify: cfg.reliability.verify, context, onEvent: consoleRenderer });
 }
 
 

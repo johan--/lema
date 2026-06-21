@@ -106,28 +106,32 @@ last injection. Tunable in config.
 
 ## Implementation phases
 
-### R0 — load + start anchor (the 80/20)
-- `src/rules/load.ts`: resolve `AGENTS.md` → `CLAUDE.md` → `.lema/rules.md`, read text.
-- `ContextManager.pushPinned`; agent pushes `SYSTEM` then rules at init.
-- A `/settings rules` line showing which file (if any) is active.
-- Tests: resolution order; missing file → null; pinned message survives masking.
+### R0 — load + start anchor (the 80/20) ✅
+- `src/rules/load.ts`: resolve `AGENTS.md` → `CLAUDE.md` → `.lema/rules.md`, read (capped).
+- Rules injected at render time by `ContextManager` (right after the system prompt) — never
+  stored, so never masked/evicted (simpler and stronger than a pinned flag).
+- `/settings` shows the active rules file.
+- Tests: resolution order; missing file → null; start anchor placement.
 
-### R1 — re-injection (anti lost-in-the-middle)
-- Condenser (headings / first bullet lines) + end-anchor append in `render()`.
-- Config `rules.reinject` / `reinjectEvery`; threshold on `pressure()`.
-- Tests: reminder appears after the threshold; condensed form for long files; the start
-  anchor is never duplicated verbatim at the end.
+### R1 — re-injection (anti lost-in-the-middle) ✅
+- `condenseRules` (headings / first lines) + end-anchor appended in `render()`.
+- Config `rules.reinject` / `reinjectEvery`; also fires when `pressure() ≥ 0.5`.
+- Tests: reminder appears on the cadence; condensed form; no duplicate full copy.
 
-### R2 — robustness & ergonomics
-- Size cap + warning for oversized files.
-- `/settings rules reload` to re-read without restarting.
+This also satisfies the heavy forms of RELIABILITY-PLAN's P3 (a real preamble that can't
+evict the task — rules are render-injected and capped) and gives P4 the machinery to pin a
+plan checklist later.
 
-### (later) R3 — nested AGENTS.md
+### R2 — robustness & ergonomics (later)
+- `/settings rules reload` to re-read without restarting; per-effort gating if wanted.
+
+### R3 — nested AGENTS.md (later)
 - Closest-file-wins for monorepos; merge root + nearest.
 
 ## Invariants (must hold; cover with tests)
 
-- Pinned messages (system + rules) survive every compaction stage.
+- Rules are render-injected (not stored), so they survive masking and every future
+  compaction stage by construction.
 - Rules load is best-effort: a missing/unreadable file never throws — lema runs without.
 - `AGENTS.md` wins over `CLAUDE.md` wins over `.lema/rules.md`.
 - Re-injection adds a *condensed* reminder, never a second full copy.
