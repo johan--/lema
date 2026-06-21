@@ -31,6 +31,7 @@ export class Tui {
   private done = false;
   private inbuf = "";
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
+  private resizeTimer: ReturnType<typeof setTimeout> | undefined;
   private paste = new PasteBuffer();
   private resolveDone: () => void = () => {};
   /** Row of the hardware cursor within the rendered input box (0 = top line of box). */
@@ -120,7 +121,21 @@ export class Tui {
 
   // ---- input ---------------------------------------------------------------
 
-  private onResize = (): void => this.render();
+  private onResize = (): void => {
+    // A resize reflows previously-emitted lines, so our relative-erase math (which
+    // assumes the old width) under-erases and the input box stacks. Debounce the
+    // burst of events fired during a drag, then clear the visible screen (scrollback
+    // is preserved) and redraw the box cleanly — no leftover boxes.
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    this.resizeTimer = setTimeout(() => {
+      this.resizeTimer = undefined;
+      if (this.done) return;
+      this.lastCursorRowInBox = 0;
+      this._hasBox = false;
+      stdout.write("\x1b[2J\x1b[H");
+      this.drawInputBox();
+    }, 80);
+  };
 
   private onData = (chunk: string): void => {
     if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = undefined; }
@@ -263,6 +278,7 @@ export class Tui {
     this.done = true;
     if (this.spinTimer) clearInterval(this.spinTimer);
     if (this.flushTimer) clearTimeout(this.flushTimer);
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
     stdin.off("data", this.onData);
     stdout.off("resize", this.onResize);
     this.eraseInputBox();

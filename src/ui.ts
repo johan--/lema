@@ -22,9 +22,10 @@ export const log = (s = ""): void => {
   else process.stdout.write(s + "\n");
 };
 export const step = (label: string, detail = "") => log(`${cyan("●")} ${bold(label)} ${dim(detail)}`);
-export const tool = (name: string, detail: string) => log(`  ${magenta("⏺")} ${bold(name)} ${detail ? dim(detail) : ""}`);
-/** The result line shown under a tool call. */
-export const toolResult = (text: string) => log(`    ${dim("⎿ " + text)}`);
+export const tool = (name: string, detail: string) =>
+  log(`  ${magenta("⏺")} ${bold(name)}${detail ? dim("(" + detail + ")") : ""}`);
+/** The result line shown under a tool call (Claude-style ⎿ branch). */
+export const toolResult = (text: string) => log(`  ${dim("⎿  " + text)}`);
 export const ok = (s: string) => log(`${green("✓")} ${s}`);
 export const warn = (s: string) => log(`${yellow("!")} ${s}`);
 export const err = (s: string) => log(`${red("✗")} ${s}`);
