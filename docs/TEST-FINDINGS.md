@@ -1,5 +1,22 @@
 # lema — live test findings (qwen3.5-9b, notes-api sandbox)
 
+> **Status: all tickets fixed and re-validated live** (commits `faef9f1`, `f08f32d`).
+> - F1 ✅ verify now runs on the maxSteps/repeat paths — the previously-broken 2-file
+>   `auto` run now completes green (8/8) with `verified ✓`, no false success.
+> - F2 ✅ (reworked) the "don't run tests" hint was ignored by the small model and was
+>   wrong for diagnosis, so it was dropped; the double run is harmless (check is fast).
+> - F3 ✅ lessons now fire by detecting red from the model's *own* bash test runs —
+>   re-run of red→green recorded 1 lesson.
+> - F4 ✅ tool-call markup stripped from final answers (validated: none leaked).
+> - F5 ✅ plan wording tightened (still prompt-level; pinned checklist is future work).
+> - F6 ✅ step labels (`● effort`, `● verify`) instead of always `skills`.
+> - F7 ✅ blank-line spam removed.
+> Also surfaced (infra, not lema): running two agents at once made LM Studio cancel a
+> model load (HTTP 400) — validate sequentially, one agent per local model.
+
+---
+
+
 Ran the real model across all effort modes against `sandbox/notes-api` (isolated copies,
 `npm test` as the check, `AGENTS.md` present). Six parallel runs. This is the punch list
 of what to fix — ordered by severity.
