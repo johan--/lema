@@ -134,7 +134,7 @@ describe("runAgent", () => {
     let saved = 0;
     const skills = { search: async () => [], save: async () => { saved++; return {} as never; }, all: () => [], record: () => {} } as never;
     const provider = makeProvider([writeCall, { content: "first" }, writeCall, { content: "fixed" }]);
-    const result = await runAgent("fix it", { maxSteps: 8, provider, cwd: "/tmp", tools: [writeTool], effort: "high", verifier, verify: "auto", skills });
+    const result = await runAgent("fix it", { maxSteps: 8, provider, cwd: "/tmp", tools: [writeTool], effort: "high", verifier, verify: "auto", memory: skills });
     assert.equal(runs, 2);          // failed, then passed
     assert.equal(result.answer, "fixed");
     assert.equal(saved, 1);          // red→green captured as a lesson
@@ -161,7 +161,7 @@ describe("runAgent", () => {
     const verifier = { command: "npm test", run: async () => ({ ok: true, output: "" }) };
     // model: run tests (fail) → edit → finish; lema verifies green over the earlier red
     const provider = makeProvider([bashCall, writeCall, { content: "fixed" }]);
-    await runAgent("make tests pass", { maxSteps: 8, provider, cwd: "/tmp", tools: [bashTool, writeTool], effort: "high", verifier, verify: "auto", skills });
+    await runAgent("make tests pass", { maxSteps: 8, provider, cwd: "/tmp", tools: [bashTool, writeTool], effort: "high", verifier, verify: "auto", memory: skills });
     assert.equal(saved, 1); // red seen via bash, green via verify → lesson
   });
 

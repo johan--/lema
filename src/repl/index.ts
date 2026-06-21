@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import type { LemaConfig } from "../config.js";
 import type { ModelProvider } from "../provider.js";
-import { SkillStore } from "../skills/index.js";
+import { MemoryStore } from "../memory.js";
+import { SkillLibrary, authorSkill } from "../skills/index.js";
 import { runAgent, formatStats, type AgentStats, type AgentEvent } from "../agent/index.js";
 import { ContextManager } from "../context/index.js";
 import { getTools, type Tool } from "../tools/index.js";
@@ -39,7 +40,8 @@ interface Session {
   /** The project rules file in effect this session, if any (for /settings). */
   rulesPath?: string;
   provider: ModelProvider;
-  skills: SkillStore;
+  memory: MemoryStore;
+  skills: SkillLibrary;
   context: ContextManager;
   tools: Tool[];
   /** Called with the stats of each completed run (the TUI shows them in the footer). */
@@ -88,12 +90,20 @@ const COMMANDS: SlashCommand[] = [
   },
   {
     name: "skills",
-    desc: "list stored skills",
+    desc: "list authored skills (invoke one with /<name>)",
     run: (s) => {
-      const all = s.skills.all();
-      if (!all.length) return ui.warn("no skills yet — they appear as lema solves verified tasks");
-      all.forEach((k) => ui.log(`  ${ui.bold(k.name)} ${ui.dim(`[${k.kind}] ${k.wins}/${k.uses}`)}`));
+      const all = s.skills.list();
+      if (!all.length) return ui.warn('no skills yet — add .lema/skills/<name>/SKILL.md or run /skill new "…"');
+      all.forEach((k) => {
+        ui.log(`  ${ui.bold("/" + k.name)} ${ui.dim("[" + k.scope + "]")}`);
+        ui.log("    " + ui.dim(k.description));
+      });
     },
+  },
+  {
+    name: "skill",
+    desc: 'author a skill: /skill new "<prompt>" [--global]',
+    run: (s, arg) => runSkillNew(s, arg),
   },
   {
     name: "ping",
@@ -169,6 +179,23 @@ async function runEffort(s: Session, arg: string): Promise<void> {
     return;
   }
   ui.log(`  effort: ${s.effort}  ${ui.dim("(auto · low · medium · high · ultra)")}`);
+}
+
+/** Author a skill from a prompt: /skill new "<prompt>" [--global]. */
+async function runSkillNew(s: Session, arg: string): Promise<void> {
+  const m = arg.trim().match(/^new\s+([\s\S]+)$/i);
+  if (!m) return ui.warn('usage: /skill new "<what the skill should do>" [--global]');
+  const global = /(^|\s)--global(\s|$)/.test(m[1]);
+  const prompt = m[1].replace(/(^|\s)--global(\s|$)/, " ").trim().replace(/^["']|["']$/g, "");
+  if (!prompt) return ui.warn('describe the skill, e.g. /skill new "review a PR diff"');
+
+  const model = await s.provider.resolveModel();
+  ui.step("skill", "authoring…");
+  const skill = await authorSkill(s.provider, model, prompt);
+  const file = s.skills.write(skill, global ? "global" : "project");
+  ui.ok(`created /${skill.name} [${global ? "global" : "project"}]`);
+  ui.log("  " + ui.dim(skill.description));
+  ui.log("  " + ui.dim(file));
 }
 
 /** Show the settings panel, or run a settings sub-command like `web on`. */
@@ -287,14 +314,27 @@ function tuiRenderer(tui: Tui): (e: AgentEvent) => void {
   };
 }
 
-async function dispatch(session: Session, raw: string): Promise<boolean> {
+async function dispatch(session: Session, raw: string, signal?: AbortSignal): Promise<boolean> {
   const [name, ...rest] = raw.split(/\s+/);
   const cmd = COMMAND_INDEX.get(name.toLowerCase());
-  if (!cmd) {
-    ui.warn(`unknown command: /${name} — type /help`);
+  if (cmd) return (await cmd.run(session, rest.join(" "))) === true;
+
+  // Not a built-in command — maybe it's an authored skill: /<name> [task].
+  const skill = session.skills.load(name);
+  if (skill) {
+    session.context.push({
+      role: "system",
+      content: `The user invoked the "${skill.name}" skill. Follow it:\n\n${skill.body}`,
+    });
+    ui.step("skill", `${skill.name} [${skill.scope}]`);
+    const task = rest.join(" ").trim();
+    if (task) await runTask(session, task, signal);
+    else ui.log(ui.dim("  skill loaded — now describe what to do with it"));
     return false;
   }
-  return (await cmd.run(session, rest.join(" "))) === true;
+
+  ui.warn(`unknown command: /${name} — type /help, or /skills`);
+  return false;
 }
 
 async function runTask(session: Session, task: string, signal?: AbortSignal): Promise<void> {
@@ -307,7 +347,8 @@ async function runTask(session: Session, task: string, signal?: AbortSignal): Pr
     verifier: session.verifier,
     provider: session.provider,
     cwd: process.cwd(),
-    skills: session.skills,
+    memory: session.memory,
+    skillsMeta: session.skills.metadataBlock() ?? undefined,
     context: session.context,
     tools: session.tools,
     signal,
@@ -325,7 +366,7 @@ async function handle(session: Session, raw: string, signal?: AbortSignal): Prom
   if (!input) return false;
   try {
     if (input === "/") printMenu();
-    else if (input.startsWith("/")) return await dispatch(session, input.slice(1));
+    else if (input.startsWith("/")) return await dispatch(session, input.slice(1), signal);
     else await runTask(session, input, signal);
   } catch (e) {
     if ((e as Error).name === "AbortError") return false;
@@ -361,7 +402,8 @@ export async function startRepl(cfg: LemaConfig, provider: ModelProvider): Promi
     verifier: checkCmd ? makeVerifier(checkCmd) : undefined,
     rulesPath: loadedRules?.path,
     provider,
-    skills: new SkillStore(cfg, provider),
+    memory: new MemoryStore(cfg, provider),
+    skills: new SkillLibrary(),
     context: new ContextManager({ budget: cfg.context, rules: loadedRules?.preamble }),
     tools: getTools(cfg),
   };

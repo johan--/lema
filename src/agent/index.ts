@@ -1,6 +1,6 @@
 import type { ModelProvider, ChatMessage } from "../provider.js";
 import { ALL_TOOLS, toolMap, type Tool } from "../tools/index.js";
-import { SkillStore } from "../skills/index.js";
+import { MemoryStore } from "../memory.js";
 import { ContextManager } from "../context/index.js";
 import { parseTextToolCalls, stripToolMarkup } from "./toolparse.js";
 import { effortProfile, estimateEffort, type EffortSetting } from "../effort.js";
@@ -49,7 +49,10 @@ export interface RunOptions {
   provider: ModelProvider;
   cwd: string;
   tools?: Tool[];
-  skills?: SkillStore;
+  /** Learned memory store (auto recall + lessons). */
+  memory?: MemoryStore;
+  /** Metadata block of authored skills (L1 progressive disclosure). */
+  skillsMeta?: string;
   onEvent?: (e: AgentEvent) => void;
   signal?: AbortSignal;
   /** Persistent context for cross-turn memory. Created once per session in repl. */
@@ -84,9 +87,9 @@ function verifyEnabled(mode: "auto" | "on" | "off" | undefined, profileVerify: b
 }
 
 /** Record a red→green outcome as a lesson skill (V3). Best-effort; never throws. */
-async function recordLesson(skills: SkillStore, task: string, command: string, failure: string): Promise<void> {
+async function recordLesson(memory: MemoryStore, task: string, command: string, failure: string): Promise<void> {
   try {
-    await skills.save({
+    await memory.save({
       name: `lesson: ${task.slice(0, 48)}`,
       description: `Working on "${task.slice(0, 80)}", \`${command}\` failed first; verify and fix before finishing.`,
       kind: "lesson",
@@ -159,23 +162,26 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
   // The system prompt is pushed once per session; subsequent tasks reuse the
   // existing conversation so it persists across turns (cross-turn memory).
   if (!ctx.isInitialized()) {
-    const system = profile.hint ? `${SYSTEM}\n\n${profile.hint}` : SYSTEM;
-    ctx.push({ role: "system", content: system });
+    // System prompt + effort hint, then authored-skill metadata (L1 disclosure):
+    // names + descriptions only, never bodies — those load when a skill is invoked.
+    const parts = [profile.hint ? `${SYSTEM}\n\n${profile.hint}` : SYSTEM];
+    if (opts.skillsMeta) parts.push(opts.skillsMeta);
+    ctx.push({ role: "system", content: parts.join("\n\n") });
   }
 
-  // Skill recall depends on the current task, so it runs on every turn.
-  if (opts.skills) {
-    const relevant = await opts.skills.search(task, 3).catch(() => []);
+  // Memory recall depends on the current task, so it runs on every turn.
+  if (opts.memory) {
+    const relevant = await opts.memory.search(task, 3).catch(() => []);
     if (relevant.length) {
-      // Cap each body so recalled skills/lessons can't crowd a small window.
+      // Cap each body so recalled memory can't crowd a small window.
       const block = relevant
         .map((s) => `### ${s.name} (${s.kind})\n${s.description}\n${s.body.slice(0, SKILL_BODY_CAP)}`)
         .join("\n\n");
       ctx.push({
         role: "system",
-        content: `You have these previously-verified skills. Reuse them when relevant:\n\n${block}`,
+        content: `Relevant recalled memory — reuse when it applies:\n\n${block}`,
       });
-      emit({ type: "step", label: "skills", text: `recalled ${relevant.length} skill(s)` });
+      emit({ type: "step", label: "memory", text: `recalled ${relevant.length}` });
     }
   }
 
@@ -259,8 +265,8 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
           });
           continue;
         }
-        if (sawRedCheck && opts.skills) {
-          await recordLesson(opts.skills, task, opts.verifier!.command, "(resolved after a failing check)");
+        if (sawRedCheck && opts.memory) {
+          await recordLesson(opts.memory, task, opts.verifier!.command, "(resolved after a failing check)");
         }
       }
       let answer = stripToolMarkup(reply.content ?? "");

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { loadConfig } from "./config.js";
 import { Provider } from "./provider.js";
-import { SkillStore } from "./skills/index.js";
+import { MemoryStore } from "./memory.js";
+import { SkillLibrary } from "./skills/index.js";
 import { runAgent } from "./agent/index.js";
 import { startRepl, consoleRenderer } from "./repl/index.js";
 import { getTools } from "./tools/index.js";
@@ -57,11 +58,10 @@ async function main() {
   }
 
   if (cmd === "skills") {
-    const store = new SkillStore(cfg, provider);
-    const all = store.all();
-    if (!all.length) return ui.warn("no skills yet — they appear as lema solves verified tasks");
+    const all = new SkillLibrary().list();
+    if (!all.length) return ui.warn("no skills yet — add .lema/skills/<name>/SKILL.md or run: lema skill new \"…\"");
     for (const s of all) {
-      ui.log(`${ui.bold(s.name)} ${ui.dim(`[${s.kind}] ${s.wins}/${s.uses}`)}`);
+      ui.log(`${ui.bold("/" + s.name)} ${ui.dim(`[${s.scope}]`)}`);
       ui.log("  " + ui.dim(s.description));
     }
     return;
@@ -73,12 +73,13 @@ async function main() {
   ui.step("model", model);
   ui.step("task", task);
   ui.log();
-  const store = new SkillStore(cfg, provider);
+  const memory = new MemoryStore(cfg, provider);
   const checkCmd = discoverCheck(process.cwd(), cfg.check);
   const verifier = checkCmd ? makeVerifier(checkCmd) : undefined;
   const loadedRules = loadRulesPreamble(process.cwd(), cfg.rules);
   const context = new ContextManager({ budget: cfg.context, rules: loadedRules?.preamble });
-  await runAgent(task, { maxSteps: cfg.maxSteps, maxTokens: cfg.maxTokens, effort: cfg.effort, provider, cwd: process.cwd(), skills: store, tools: getTools(cfg), verifier, verify: cfg.reliability.verify, context, onEvent: consoleRenderer });
+  const skillsMeta = new SkillLibrary().metadataBlock() ?? undefined;
+  await runAgent(task, { maxSteps: cfg.maxSteps, maxTokens: cfg.maxTokens, effort: cfg.effort, provider, cwd: process.cwd(), memory, skillsMeta, tools: getTools(cfg), verifier, verify: cfg.reliability.verify, context, onEvent: consoleRenderer });
 }
 
 
