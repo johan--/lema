@@ -107,16 +107,20 @@ This makes the ultra gate a special case of step 4 — one consistent path, not 
 
 ## Phasing (re-scoped around integration)
 
-- **P1 — refactor first (no new behaviour):** change `EffortProfile.verify` semantics +
-  `forceFinish` to carry status; add the `dirty` flag. Pure groundwork so V1 slots in
-  cleanly and the ultra nudge is retired. Tests stay green.
-- **P2 — V1 verification loop:** `src/verify/check.ts` (discover + run), wire into step 4,
-  config `check` + `reliability.verify`. The 80/20.
-- **P3 — preamble budget in `ContextManager`** (prereq for P4/P5 and RULES.md).
-- **P4 — V2 plan checklist** (needs P3 + RULES.md pinned/re-inject).
-- **P5 — V3 lessons** (needs kind-aware recall; reserve a lesson slot).
+- **P1 — refactor groundwork** ✅ — `EffortProfile.verify` now means "run the check";
+  `forceFinish` carries honest check status; `dirty` flag added; ultra prompt-nudge retired.
+- **P2 — V1 verification loop** ✅ — `src/verify/check.ts` (discover + run), gate wired into
+  the finish branch, config `check` + `reliability.verify`, bounded rounds, honest exhaustion.
+- **P3 — preamble cap** ✅ (pragmatic) — recalled skills/lessons bodies are char-capped so
+  they can't crowd a small window. A fuller `ContextManager` preamble budget lands with
+  RULES.md.
+- **P4 — V2 plan** ✅ (prompt-level) — high/ultra prompt the model to list subgoals up
+  front. The pinned re-injected checklist arrives with RULES.md's pinned machinery.
+- **P5 — V3 lessons** ✅ — a red→green outcome is saved as a `lesson` skill and recalled
+  like any skill on similar tasks.
 
-P1+P2 deliver the spine; P3–P5 layer on without touching the loop's shape.
+Shipped together. P3/P4 are in their pragmatic form now; their heavier versions (a real
+context preamble budget, a pinned re-injected checklist) ride the RULES.md work when it lands.
 
 ## Invariants (must hold; cover with tests)
 

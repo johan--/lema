@@ -9,6 +9,7 @@ import { runAgent, formatStats, type AgentStats, type AgentEvent } from "../agen
 import { ContextManager } from "../context/index.js";
 import { getTools, type Tool } from "../tools/index.js";
 import { EFFORT_SETTINGS, type EffortSetting } from "../effort.js";
+import { discoverCheck, makeVerifier, type Verifier } from "../verify/index.js";
 import { Tui, type TuiCommand } from "../tui/index.js";
 import { renderMarkdown } from "../tui/markdown.js";
 
@@ -32,6 +33,8 @@ interface Session {
   maxSteps: number;
   maxTokens: number;
   effort: EffortSetting;
+  verify: "auto" | "on" | "off";
+  verifier?: Verifier;
   provider: ModelProvider;
   skills: SkillStore;
   context: ContextManager;
@@ -48,6 +51,8 @@ interface Session {
   setWeb?: (on: boolean) => void;
   /** Change the reasoning effort for this session. */
   setEffort?: (e: EffortSetting) => void;
+  /** Change the verification mode for this session. */
+  setVerify?: (m: "auto" | "on" | "off") => void;
 }
 
 /** A slash command. Adding one must not require touching the REPL loop (open/closed). */
@@ -174,28 +179,31 @@ async function runSettings(s: Session, arg: string): Promise<void> {
   // Interactive radio-style menu in the TUI; plain panel everywhere else.
   if (s.select) return settingsMenu(s);
 
+  const check = s.verifier ? s.verifier.command : "none found";
   ui.log(ui.dim("  settings:"));
   ui.log(`    ${"web".padEnd(8)} ${webOn(s) ? ui.green("on") : ui.dim("off")}`);
+  ui.log(`    ${"verify".padEnd(8)} ${s.verify}  ${ui.dim("· " + check)}`);
+  ui.log(`    ${"effort".padEnd(8)} ${s.effort}`);
   ui.log(`    ${"cwd".padEnd(8)} ${ui.dim(process.cwd())}`);
   ui.log(`    ${"server".padEnd(8)} ${ui.dim(s.baseUrl)}`);
-  ui.log(ui.dim("  change one:  /settings web on|off · /settings ping"));
+  ui.log(ui.dim("  change one:  /settings web on|off · /settings ping · /effort"));
 }
 
-/** Modal settings menu: Enter on "web search" flips it; the menu re-opens with fresh state. */
+/** Modal settings menu: Enter on a row toggles/cycles it; the menu re-opens with fresh state. */
 async function settingsMenu(s: Session): Promise<void> {
-  const WEB = 0, PING = 1, CLOSE = 2;
+  const cycle = { auto: "on", on: "off", off: "auto" } as const;
   for (;;) {
     const items = [
       `web search   ${webOn(s) ? "● on" : "○ off"}`,
+      `verify       ${s.verify}${s.verifier ? "" : " (no check)"}`,
       "ping server",
       "close",
     ];
     const pick = await s.select!("Settings  (↑/↓ · Enter · Esc)", items);
-    if (pick === null) return;
-    const idx = items.indexOf(pick);
-    if (idx === CLOSE) return;
-    if (idx === WEB) { s.setWeb?.(!webOn(s)); continue; }
-    if (idx === PING) { await SETTINGS_INDEX.get("ping")!.run(s, ""); return; }
+    if (pick === null || pick.startsWith("close")) return;
+    if (pick.startsWith("web")) { s.setWeb?.(!webOn(s)); continue; }
+    if (pick.startsWith("verify")) { s.setVerify?.(cycle[s.verify]); continue; }
+    if (pick.startsWith("ping")) { await SETTINGS_INDEX.get("ping")!.run(s, ""); return; }
   }
 }
 
@@ -291,6 +299,8 @@ async function runTask(session: Session, task: string, signal?: AbortSignal): Pr
     maxSteps: session.maxSteps,
     maxTokens: session.maxTokens,
     effort: session.effort,
+    verify: session.verify,
+    verifier: session.verifier,
     provider: session.provider,
     cwd: process.cwd(),
     skills: session.skills,
@@ -336,11 +346,14 @@ async function runBatch(session: Session): Promise<void> {
 
 /** Start the interactive session. Bare `lema` lands here. */
 export async function startRepl(cfg: LemaConfig, provider: ModelProvider): Promise<void> {
+  const checkCmd = discoverCheck(process.cwd(), cfg.check);
   const session: Session = {
     baseUrl: cfg.baseUrl,
     maxSteps: cfg.maxSteps,
     maxTokens: cfg.maxTokens,
     effort: cfg.effort,
+    verify: cfg.reliability.verify,
+    verifier: checkCmd ? makeVerifier(checkCmd) : undefined,
     provider,
     skills: new SkillStore(cfg, provider),
     context: new ContextManager({ budget: cfg.context }),
@@ -384,6 +397,10 @@ export async function startRepl(cfg: LemaConfig, provider: ModelProvider): Promi
   session.setEffort = (e) => {
     cfg.effort = e;
     session.effort = e;
+  };
+  session.setVerify = (m) => {
+    cfg.reliability = { ...cfg.reliability, verify: m };
+    session.verify = m;
   };
   ui.setSink((s) => tui.print(s));
   try {

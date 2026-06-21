@@ -42,11 +42,13 @@ export interface EffortProfile {
   /** Appended to the system prompt to steer thoroughness. Empty for medium. */
   hint: string;
   /**
-   * Require a tool-grounded verification pass before accepting a final answer
-   * (ultra only). Research shows small models self-verify poorly but verify well
-   * with tools, and one sequential refine round beats wide parallel sampling.
+   * Default whether to run the tool-grounded verification loop (run the project's
+   * check and gate success on green). Overridable by `reliability.verify` config.
+   * Research: small models self-verify poorly but verify well with tools.
    */
   verify: boolean;
+  /** Ask the model to plan subgoals up front before acting (high/ultra). */
+  plan: boolean;
   /** Native reasoning hint to pass through when the server supports it (E1). */
   reasoning?: "low" | "medium" | "high";
 }
@@ -54,10 +56,9 @@ export interface EffortProfile {
 const MIN_STEPS = 4;
 const MIN_TOKENS = 512;
 
-const VERIFY_HINT =
-  "This is a high-stakes task. Before your FINAL answer you MUST verify with tools: " +
-  "run the tests or build, re-read any file you changed, and confirm with grep. " +
-  "If verification reveals a problem, fix it and verify again. Never claim success unverified.";
+const PLAN_HINT =
+  "Start by briefly listing the concrete subgoals, then work through them in order, " +
+  "using tools to check your work as you go.";
 
 /** Resolve an effort level into concrete budgets + a prompt hint. Pure. */
 export function effortProfile(effort: Effort, base: EffortBase): EffortProfile {
@@ -68,26 +69,29 @@ export function effortProfile(effort: Effort, base: EffortBase): EffortProfile {
         maxTokens: Math.max(MIN_TOKENS, Math.floor(base.maxTokens / 2)),
         hint: "Answer concisely. Take the most direct path and avoid unnecessary reasoning or extra tool calls.",
         verify: false,
+        plan: false,
       };
     case "high":
       return {
         maxSteps: base.maxSteps * 2,
         maxTokens: base.maxTokens * 2,
-        hint: "Work carefully: plan the steps, use tools to verify, and double-check before finishing.",
-        verify: false,
+        hint: `Work carefully and double-check before finishing. ${PLAN_HINT}`,
+        verify: true,
+        plan: true,
         reasoning: "high",
       };
     case "ultra":
-      // Scale STEPS (room for a verify-and-fix round), not the monologue — for a
+      // Scale STEPS (room for verify-and-fix rounds), not the monologue — for a
       // small model more tool actions help, more thinking tokens invite overthinking.
       return {
         maxSteps: base.maxSteps * 3,
         maxTokens: base.maxTokens * 2,
-        hint: VERIFY_HINT,
+        hint: `Be thorough; correctness matters more than speed. ${PLAN_HINT}`,
         verify: true,
+        plan: true,
         reasoning: "high",
       };
     default: // medium and any unknown value
-      return { maxSteps: base.maxSteps, maxTokens: base.maxTokens, hint: "", verify: false };
+      return { maxSteps: base.maxSteps, maxTokens: base.maxTokens, hint: "", verify: false, plan: false };
   }
 }

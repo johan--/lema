@@ -24,6 +24,10 @@ export interface LemaConfig {
   tools?: { web?: boolean };
   /** Reasoning dial: auto/low/medium/high/ultra. Scales budgets; auto picks per task. Default medium. */
   effort: EffortSetting;
+  /** Explicit verification command (e.g. "npm test"). If unset, lema discovers one. */
+  check?: string;
+  /** Reliability engine flags. `verify` follows effort by default. */
+  reliability: { verify: "auto" | "on" | "off" };
 }
 
 export const DEFAULTS: LemaConfig = {
@@ -35,6 +39,7 @@ export const DEFAULTS: LemaConfig = {
   stateDir: ".lema",
   tools: { web: true },
   effort: "medium",
+  reliability: { verify: "auto" },
   context: BUDGET_DEFAULTS,
 };
 
@@ -50,9 +55,11 @@ export function loadConfig(cwd = process.cwd()): LemaConfig {
       // maskWindow, or just tools.web) keeps the other defaults.
       const context = { ...cfg.context, ...raw.context };
       const tools = { ...cfg.tools, ...raw.tools };
+      const reliability = { ...cfg.reliability, ...raw.reliability };
       Object.assign(cfg, raw);
       cfg.context = context;
       cfg.tools = tools;
+      cfg.reliability = reliability;
     } catch (err) {
       throw new Error(`Failed to parse lema.config.json: ${(err as Error).message}`);
     }

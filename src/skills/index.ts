@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ModelProvider } from "../provider.js";
 import type { LemaConfig } from "../config.js";
 
-export type SkillKind = "knowledge" | "procedure";
+export type SkillKind = "knowledge" | "procedure" | "lesson";
 
 export interface Skill {
   id: string;

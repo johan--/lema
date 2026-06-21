@@ -6,6 +6,7 @@
   "maxSteps": 12,
   "stateDir": ".lema",
   "effort": "medium",
+  "reliability": { "verify": "auto" },
   "tools": { "web": true },
   "context": {
     "contextWindow": 8192,

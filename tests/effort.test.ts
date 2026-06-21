@@ -32,17 +32,23 @@ describe("effortProfile", () => {
     assert.equal(p.maxTokens, 512); // min 512, not 300
   });
 
-  test("ultra triples steps, doubles tokens, and requires verification", () => {
+  test("ultra triples steps, doubles tokens, verifies and plans", () => {
     const p = effortProfile("ultra", base);
-    assert.equal(p.maxSteps, 36);   // steps scale most (room for a verify pass)
+    assert.equal(p.maxSteps, 36);   // steps scale most (room for verify-fix rounds)
     assert.equal(p.maxTokens, 4096); // tokens only 2x — not a thinking blowout
     assert.equal(p.verify, true);
-    assert.match(p.hint, /verify/i);
+    assert.equal(p.plan, true);
+    assert.match(p.hint, /subgoals/i);
   });
 
-  test("non-ultra levels do not require verification", () => {
-    for (const e of ["low", "medium", "high"] as const) {
+  test("high and ultra verify+plan; low and medium do neither", () => {
+    for (const e of ["high", "ultra"] as const) {
+      assert.equal(effortProfile(e, base).verify, true);
+      assert.equal(effortProfile(e, base).plan, true);
+    }
+    for (const e of ["low", "medium"] as const) {
       assert.equal(effortProfile(e, base).verify, false);
+      assert.equal(effortProfile(e, base).plan, false);
     }
   });
 

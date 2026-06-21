@@ -112,24 +112,55 @@ describe("runAgent", () => {
     assert.equal(result.answer, "done");
   });
 
-  test("ultra gates the first finish behind a verify pass", async () => {
-    // The model would finish immediately, but ultra forces one more turn first.
-    let calls = 0;
-    const provider: ModelProvider = {
-      listModels: async () => ["test-model"],
-      resolveModel: async () => "test-model",
-      embed: async (t) => t.map(() => []),
-      chat: async () => {
-        calls++;
-        return {
-          message: { role: "assistant", content: `answer ${calls}`, tool_calls: undefined },
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-        };
-      },
-    };
-    const result = await runAgent("do it", { maxSteps: 5, provider, cwd: "/tmp", tools: [], effort: "ultra" });
-    assert.equal(calls, 2); // first finish was gated, model asked to verify, then accepted
-    assert.equal(result.answer, "answer 2");
+  // --- verification loop (V1) ---
+  const writeTool = {
+    schema: { type: "function" as const, function: { name: "write_file", description: "", parameters: {} } },
+    run: async () => "OK: wrote",
+  };
+  const writeCall = { content: null, toolCalls: [{ id: "1", type: "function" as const, function: { name: "write_file", arguments: "{}" } }] };
+
+  test("runs the check after edits and accepts on green", async () => {
+    let runs = 0;
+    const verifier = { command: "npm test", run: async () => { runs++; return { ok: true, output: "pass" }; } };
+    const provider = makeProvider([writeCall, { content: "done" }]);
+    const result = await runAgent("change a file", { maxSteps: 5, provider, cwd: "/tmp", tools: [writeTool], effort: "high", verifier, verify: "auto" });
+    assert.equal(runs, 1);
+    assert.equal(result.answer, "done");
+  });
+
+  test("red→green: failed check feeds back, fix re-verifies, lesson recorded", async () => {
+    let runs = 0;
+    const verifier = { command: "npm test", run: async () => { runs++; return runs === 1 ? { ok: false, output: "1 failing" } : { ok: true, output: "pass" }; } };
+    let saved = 0;
+    const skills = { search: async () => [], save: async () => { saved++; return {} as never; }, all: () => [], record: () => {} } as never;
+    const provider = makeProvider([writeCall, { content: "first" }, writeCall, { content: "fixed" }]);
+    const result = await runAgent("fix it", { maxSteps: 8, provider, cwd: "/tmp", tools: [writeTool], effort: "high", verifier, verify: "auto", skills });
+    assert.equal(runs, 2);          // failed, then passed
+    assert.equal(result.answer, "fixed");
+    assert.equal(saved, 1);          // red→green captured as a lesson
+  });
+
+  test("no verifier ⇒ accepts the first finish even on high", async () => {
+    let runs = 0;
+    const provider = makeProvider([writeCall, { content: "done" }]);
+    await runAgent("change a file", { maxSteps: 5, provider, cwd: "/tmp", tools: [writeTool], effort: "high" });
+    assert.equal(runs, 0); // nothing ran; no verifier present
+  });
+
+  test("no edits ⇒ no verification (read-only task)", async () => {
+    let runs = 0;
+    const verifier = { command: "npm test", run: async () => { runs++; return { ok: true, output: "" }; } };
+    const provider = makeProvider([{ content: "just an answer" }]);
+    await runAgent("what is this?", { maxSteps: 5, provider, cwd: "/tmp", tools: [], effort: "high", verifier, verify: "auto" });
+    assert.equal(runs, 0); // dirty was never set
+  });
+
+  test("verify:off disables the loop even with a verifier", async () => {
+    let runs = 0;
+    const verifier = { command: "npm test", run: async () => { runs++; return { ok: true, output: "" }; } };
+    const provider = makeProvider([writeCall, { content: "done" }]);
+    await runAgent("change a file", { maxSteps: 5, provider, cwd: "/tmp", tools: [writeTool], effort: "high", verifier, verify: "off" });
+    assert.equal(runs, 0);
   });
 
   test("auto effort resolves per task and high passes reasoning_effort", async () => {
