@@ -232,11 +232,12 @@ export class Tui {
     this.paste.clear();
     if (shown) {
       this.history.push(shown);
-      // A blank line above + a bold prompt so the user's message stands out as a
-      // turn boundary instead of blending into the transcript.
-      this.print("");
-      this.print(ui.bold(ui.magenta("› ")) + (shown.startsWith("/") ? ui.cyan(shown) : ui.bold(shown)));
-      this.print("");
+      // Leading "\n" in the same print() gives a blank line above the message as a
+      // turn boundary. A separate print("") wouldn't work — print() trims trailing
+      // blank lines, so a pure-blank call is a no-op. The blank *below* comes from
+      // the response (formatResponse leads with a blank) or the grouped tool lines.
+      const label = shown.startsWith("/") ? ui.cyan(shown) : ui.bold(shown);
+      this.print("\n" + ui.bold(ui.magenta("› ")) + label);
     }
     this.busy = true;
     this.render();
