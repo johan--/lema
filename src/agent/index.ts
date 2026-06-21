@@ -159,12 +159,7 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
   // The system prompt is pushed once per session; subsequent tasks reuse the
   // existing conversation so it persists across turns (cross-turn memory).
   if (!ctx.isInitialized()) {
-    // When lema verifies, tell the model not to run the tests itself (avoids a
-    // redundant double run and lets lema be the first to see a failure).
-    const verifyNote = doVerify
-      ? `\n\nDo NOT run the tests yourself — lema runs \`${opts.verifier!.command}\` automatically before finishing.`
-      : "";
-    const system = `${SYSTEM}${profile.hint ? `\n\n${profile.hint}` : ""}${verifyNote}`;
+    const system = profile.hint ? `${SYSTEM}\n\n${profile.hint}` : SYSTEM;
     ctx.push({ role: "system", content: system });
   }
 
@@ -313,6 +308,11 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
       if (READ_ONLY.has(call.function.name)) seen.set(sig, result);
       // A successful file change means there's something to verify later.
       if (WRITE_TOOLS.has(call.function.name) && !result.startsWith("ERROR")) dirty = true;
+      // The model often runs the tests itself (e.g. to diagnose). If such a run
+      // fails, remember it so a later green still counts as a red→green lesson.
+      if (call.function.name === "bash" && result.startsWith("EXIT") && /\b(test|build|lint|check)\b/.test(String(args.command ?? ""))) {
+        sawRedCheck = true;
+      }
       ctx.push({ role: "tool", tool_call_id: call.id, content: result });
     }
 

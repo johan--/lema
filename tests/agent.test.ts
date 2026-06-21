@@ -150,6 +150,21 @@ describe("runAgent", () => {
     assert.match(result.answer, /still failing/i); // no false success
   });
 
+  test("a failing bash test run + green verify records a lesson (F3)", async () => {
+    let saved = 0;
+    const skills = { search: async () => [], save: async () => { saved++; return {} as never; }, all: () => [], record: () => {} } as never;
+    const bashTool = {
+      schema: { type: "function" as const, function: { name: "bash", description: "", parameters: {} } },
+      run: async () => "EXIT 1: 1 failing", // the model ran the tests itself and they failed
+    };
+    const bashCall = { content: null, toolCalls: [{ id: "1", type: "function" as const, function: { name: "bash", arguments: '{"command":"npm test"}' } }] };
+    const verifier = { command: "npm test", run: async () => ({ ok: true, output: "" }) };
+    // model: run tests (fail) → edit → finish; lema verifies green over the earlier red
+    const provider = makeProvider([bashCall, writeCall, { content: "fixed" }]);
+    await runAgent("make tests pass", { maxSteps: 8, provider, cwd: "/tmp", tools: [bashTool, writeTool], effort: "high", verifier, verify: "auto", skills });
+    assert.equal(saved, 1); // red seen via bash, green via verify → lesson
+  });
+
   test("no verifier ⇒ accepts the first finish even on high", async () => {
     let runs = 0;
     const provider = makeProvider([writeCall, { content: "done" }]);
