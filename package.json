@@ -1,7 +1,7 @@
 {
   "name": "@iivgll4/lema",
   "version": "1.0.0",
-  "description": "A local, self-improving agentic CLI for local LLMs. It works in your repo, chats, and grows its own verified skills.",
+  "description": "Agentic CLI for local LLMs (LM Studio, Ollama, llama.cpp). Real agent loop, web search, skill memory, auto-compaction, MCP server. Optimized for small models (4-14B).",
   "type": "module",
   "bin": {
     "lema": "dist/cli.js",
