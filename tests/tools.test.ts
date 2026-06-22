@@ -278,4 +278,24 @@ describe("bash", () => {
     await writeFile.run({ path: "check.txt", content: "" }, ctx());
     assert.match(await bash.run({ command: "ls check.txt" }, ctx()), /check\.txt/);
   });
+
+  test("closes stdin so a program reading input does not hang", async () => {
+    // With stdin closed, `cat` gets EOF immediately and exits instead of blocking.
+    const out = await bash.run({ command: "cat" }, ctx());
+    assert.equal(out, "(no output)");
+  });
+
+  test("honors an abort signal and stops a long-running command", async () => {
+    const ac = new AbortController();
+    const c = { ...ctx(), signal: ac.signal };
+    const p = bash.run({ command: "sleep 30" }, c);
+    setTimeout(() => ac.abort(), 50);
+    assert.match(await p, /aborted/);
+  });
+
+  test("returns immediately when the signal is already aborted", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    assert.match(await bash.run({ command: "sleep 30" }, { ...ctx(), signal: ac.signal }), /aborted/);
+  });
 });

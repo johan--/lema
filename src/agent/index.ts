@@ -306,7 +306,7 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
         result = `ERROR: unknown tool ${call.function.name}`;
       } else {
         try {
-          result = await tool.run(args, { cwd });
+          result = await tool.run(args, { cwd, signal: opts.signal });
         } catch (e) {
           result = `ERROR: ${(e as Error).message}`;
         }

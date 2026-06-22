@@ -8,6 +8,8 @@ export interface Tool {
 
 export interface ToolContext {
   cwd: string;
+  /** Cancellation from the REPL (Esc). Long-running tools must honor it. */
+  signal?: AbortSignal;
 }
 
 export function def(
