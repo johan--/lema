@@ -1,6 +1,6 @@
 {
   "name": "@iivgll4/lema",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "Agentic CLI for local LLMs (LM Studio, Ollama, llama.cpp). Real agent loop, web search, skill memory, auto-compaction, MCP server. Optimized for small models (4-14B).",
   "type": "module",
   "bin": {
