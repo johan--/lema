@@ -43,6 +43,22 @@ lema
 
 ---
 
+## Project rules
+
+Put an `AGENTS.md` (or `CLAUDE.md`, or `.lema/rules.md`) in your project root and lema will read it automatically before every task — coding style, architecture decisions, what to avoid, anything you want the model to always know.
+
+```markdown
+# AGENTS.md
+
+- All code must pass `npm test` before finishing
+- Use TypeScript strict mode, no `any` in public signatures
+- Commit messages follow Conventional Commits
+```
+
+lema injects the rules at the start of context and re-injects a condensed version every few turns so they don't get lost on long tasks.
+
+---
+
 ## What it can do
 
 **Agent tasks** — give it a goal, it figures out the steps:
@@ -59,14 +75,35 @@ lema "what changed in React 19 and do we need to update anything"
 
 **Effort control** — faster or deeper depending on the task:
 ```bash
-lema --effort low  "summarize this file"
-lema --effort high "find the race condition in the session handler"
+lema --effort low   "summarize this file"
+lema --effort high  "find the race condition in the session handler"
 ```
 
 **MCP server** — Claude Code and other MCP clients can control lema programmatically:
 ```bash
 lema-mcp  # starts the MCP server
 ```
+
+---
+
+## TUI commands
+
+Type `/` in the interactive session to see all commands:
+
+| Command | What it does |
+|---|---|
+| `/compact [hint]` | Summarize and compress the conversation to free up context window |
+| `/effort <level>` | Switch reasoning depth: `low` `medium` `high` `ultra` |
+| `/remember <text>` | Save anything to memory — lema will recall it on relevant future tasks |
+| `/memory [query]` | Search memory, or list everything if no query given |
+| `/clear` | Clear the screen |
+| `/models` | List loaded models, pick one interactively |
+| `/skills` | Browse the skill library |
+| `/skill new "<prompt>"` | Author a new reusable skill |
+| `/settings web on\|off` | Toggle built-in web search |
+| `/ping` | Check LM Studio connection |
+| `/help` | Show all commands |
+| `/exit` | Quit |
 
 ---
 
