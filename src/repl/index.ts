@@ -314,23 +314,14 @@ export function consoleRenderer(e: AgentEvent): void {
 
 /** Renders agent events into the TUI: status spinner + transcript output. */
 function tuiRenderer(tui: Tui): (e: AgentEvent) => void {
-  const assistantBuffer: string[] = [];
   return (e) => {
     if (e.type === "thinking") tui.setStatus("thinking…");
     else if (e.type === "thinking-stop") tui.setStatus(null);
     else if (e.type === "step") ui.step(e.label ?? "step", e.text ?? "");
     else if (e.type === "tool") ui.tool(e.tool ?? "?", e.detail ?? "");
     else if (e.type === "tool-result") ui.toolResult(e.text ?? "");
-    else if (e.type === "assistant" && e.text) {
-      assistantBuffer.push(formatResponse(e.text));
-    }
-    else if (e.type === "done" && e.text?.trim()) {
-      ui.log(formatResponse(e.text));
-    }
-    else if (e.type === "done" && assistantBuffer.length > 0) {
-      ui.log(assistantBuffer.join("\n"));
-      assistantBuffer.length = 0;
-    }
+    else if (e.type === "assistant" && e.text?.trim()) ui.log(formatResponse(e.text));
+    else if (e.type === "done" && e.text?.trim()) ui.log(formatResponse(e.text));
   };
 }
 

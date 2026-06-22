@@ -239,7 +239,7 @@ export class Tui {
     } else if (key.ctrl && key.name === "d") {
       if (!st.buf) return this.teardown();
     } else if (key.name === "backspace") {
-      if (st.cursor > 0) { st.buf = st.buf.slice(0, st.cursor - 1) + st.buf.slice(st.cursor); st.cursor--; }
+      if (st.cursor > 0) { st.buf = st.buf.slice(0, st.cursor - 1) + st.buf.slice(st.cursor); st.cursor--; st.selected = 0; }
     } else if (key.name === "left")  { if (st.cursor > 0) st.cursor--; }
     else if (key.name === "right")   { if (st.cursor < st.buf.length) st.cursor++; }
     else if (key.name === "home" || (key.ctrl && key.name === "a")) { st.cursor = 0; }
@@ -253,6 +253,7 @@ export class Tui {
     else if (key.name === "tab") {
       if (ms.length) { st.buf = "/" + ms[st.selected].name + " "; st.cursor = st.buf.length; st.selected = 0; }
     } else if (key.str && !key.ctrl && !key.meta && key.str >= " ") {
+      st.selected = 0;
       this.insert(key.str);
     } else return;
     this.render();
