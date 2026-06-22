@@ -10,7 +10,7 @@ import { discoverCheck, makeVerifier } from "./verify/index.js";
 import { loadRulesPreamble } from "./rules/index.js";
 import { ContextManager } from "./context/index.js";
 import * as ui from "./ui.js";
-import { checkForUpdate } from "./update-check.js";
+import { checkForUpdateSync, fetchUpdateInBackground } from "./update-check.js";
 
 const HELP = `${ui.bold("lema")} — a local, self-improving agentic CLI
 
@@ -30,6 +30,11 @@ ${ui.bold("Config")} (lema.config.json or env)
 
 async function main() {
   const argv = process.argv.slice(2);
+
+  // Show notice from cache (0ms), fetch in background for next run.
+  checkForUpdateSync();
+  fetchUpdateInBackground();
+
   const cfg = loadConfig();
   const provider = new Provider(cfg);
 
@@ -38,16 +43,10 @@ async function main() {
     return;
   }
 
-  // Bare `lema` opens the interactive session — await update check first so
-  // the notice prints before the TUI takes over the screen.
   if (argv.length === 0) {
-    await checkForUpdate();
     await startRepl(cfg, provider);
     return;
   }
-
-  // For non-interactive commands fire-and-forget (don't slow them down).
-  checkForUpdate();
 
   const cmd = argv[0];
 
