@@ -38,7 +38,7 @@ function isNewer(latest: string, current: string): boolean {
 
 function notify(latest: string, current: string): void {
   const line1 = `  Update available  ${current} → \x1b[32m${latest}\x1b[0m`;
-  const line2 = `  \x1b[36mnpm install -g ${PACKAGE}\x1b[0m`;
+  const line2 = `  Run \x1b[36mlema update\x1b[0m to upgrade`;
   process.stdout.write(`\n${line1}\n${line2}\n\n`);
 }
 
