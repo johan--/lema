@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFile, writeFile, editFile, listDir, bash, grep, glob } from "../src/tools/index.js";
+import { classifyBlocking } from "../src/tools/shell.js";
 
 let cwd: string;
 before(() => { cwd = mkdtempSync(join(tmpdir(), "lema-tools-")); });
@@ -297,5 +298,34 @@ describe("bash", () => {
     const ac = new AbortController();
     ac.abort();
     assert.match(await bash.run({ command: "sleep 30" }, { ...ctx(), signal: ac.signal }), /aborted/);
+  });
+
+  test("blocks interactive/long-running commands before spawning", async () => {
+    assert.match(await bash.run({ command: "npm start" }, ctx()), /EXIT blocked/);
+    assert.match(await bash.run({ command: "cd app && npm run dev" }, ctx()), /EXIT blocked/);
+  });
+});
+
+describe("classifyBlocking", () => {
+  test("flags dev servers and watchers", () => {
+    for (const c of ["npm start", "npm run dev", "yarn serve", "flask run", "vite", "nodemon app.js", "jest --watch"]) {
+      assert.ok(classifyBlocking(c), `expected blocked: ${c}`);
+    }
+  });
+
+  test("flags REPLs, pagers, editors, and follows", () => {
+    for (const c of ["python3", "node", "psql", "less file.txt", "vim x.py", "top", "tail -f log"]) {
+      assert.ok(classifyBlocking(c), `expected blocked: ${c}`);
+    }
+  });
+
+  test("catches a blocker after cd in a chain", () => {
+    assert.ok(classifyBlocking("cd web && npm run start"));
+  });
+
+  test("allows normal one-shot commands", () => {
+    for (const c of ["python3 app.py", "node --check app.js", "npm test", "npm run build", "ls -la", "grep -w foo x", "git status"]) {
+      assert.equal(classifyBlocking(c), null, `expected allowed: ${c}`);
+    }
   });
 });
