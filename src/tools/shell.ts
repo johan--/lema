@@ -12,15 +12,41 @@ const MAX_OUTPUT = 10 * 1024 * 1024;
  * Patterns are conservative (anchored, word-bounded) to avoid false positives.
  */
 const BLOCKERS: Array<{ re: RegExp; why: string }> = [
+  // Editors, pagers, monitors, follows.
   { re: /^(?:sudo\s+)?(?:vi|vim|nvim|nano|emacs|pico)\b/, why: "a text editor" },
   { re: /^(?:sudo\s+)?(?:less|more|man)\b/, why: "a pager" },
-  { re: /^(?:sudo\s+)?(?:top|htop|watch)\b/, why: "a live monitor" },
+  { re: /^(?:sudo\s+)?(?:top|htop|watch|journalctl)\b/, why: "a live monitor" },
   { re: /\btail\s+-[a-zA-Z]*f/, why: "a follow that never exits" },
-  { re: /^(?:python3?|node|deno|irb|ghci|R|psql|mysql|sqlite3|bash|sh|zsh|fish)\s*$/, why: "an interactive REPL/shell" },
+  { re: /\bdocker\b.*\blogs\s+-[a-zA-Z]*f/, why: "a log follow that never exits" },
+  // Interactive REPLs / shells (the bare interpreter, no script).
+  { re: /^(?:python3?|node|deno|irb|pry|ghci|R|psql|mysql|sqlite3|mongosh|redis-cli|bash|sh|zsh|fish|iex|clj|scala|dart|php\s+-a)\s*$/, why: "an interactive REPL/shell" },
+  // JS/TS dev servers and watchers.
   { re: /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:start|dev|serve|watch)\b/, why: "a dev server or watcher" },
-  { re: /\b(?:flask\s+run|php\s+-S|next\s+dev|nuxt\s+dev|vite|nodemon|http-server|live-server)\b/, why: "a dev server" },
+  { re: /\b(?:next|nuxt|remix|astro)\s+dev\b/, why: "a dev server" },
+  { re: /\b(?:vite|nodemon|http-server|live-server|webpack-dev-server|ng\s+serve|gatsby\s+develop|expo\s+start|react-native\s+start|storybook\s+dev)\b/, why: "a dev server" },
+  // Python web frameworks.
+  { re: /\bflask\s+run\b/, why: "a dev server" },
+  { re: /\bmanage\.py\s+runserver\b/, why: "a Django dev server" },
+  { re: /\b(?:uvicorn|gunicorn|hypercorn|daphne|streamlit\s+run|jupyter\s+(?:notebook|lab))\b/, why: "a server/notebook" },
+  // Ruby / PHP.
   { re: /\brails\s+(?:s|server)\b/, why: "a dev server" },
-  { re: /\bmanage\.py\s+runserver\b/, why: "a dev server" },
+  { re: /\b(?:bundle\s+exec\s+)?(?:rackup|puma|unicorn|shotgun)\b/, why: "a dev server" },
+  { re: /\bphp\s+-S\b/, why: "a dev server" },
+  { re: /\bphp\s+artisan\s+serve\b/, why: "a Laravel dev server" },
+  { re: /\bsymfony\s+(?:serve|server:start)\b/, why: "a dev server" },
+  // Dart / Flutter.
+  { re: /\bflutter\s+(?:run|daemon|attach|drive)\b/, why: "a Flutter run/watch that never exits" },
+  { re: /\bwebdev\s+serve\b/, why: "a Dart dev server" },
+  // Go / Rust / Java / .NET / Elixir / Hugo / Jekyll.
+  { re: /\b(?:air|gin|realize|reflex)\b/, why: "a Go live-reload server" },
+  { re: /\bcargo\s+watch\b/, why: "a Rust watcher" },
+  { re: /\b(?:trunk\s+serve|dx\s+serve)\b/, why: "a Rust web dev server" },
+  { re: /\bmvn\b.*\bspring-boot:run\b/, why: "a Spring Boot server" },
+  { re: /\b(?:gradlew?|\.\/gradlew)\s+(?:bootRun|run)\b/, why: "a Gradle run that may not exit" },
+  { re: /\bdotnet\s+(?:run|watch)\b/, why: "a .NET run/watch server" },
+  { re: /\bmix\s+phx\.server\b/, why: "a Phoenix server" },
+  { re: /\b(?:hugo\s+server|jekyll\s+serve)\b/, why: "a static-site dev server" },
+  // Generic watch flag.
   { re: /\s--watch\b/, why: "a watch mode that never exits" },
 ];
 

@@ -314,7 +314,19 @@ describe("classifyBlocking", () => {
   });
 
   test("flags REPLs, pagers, editors, and follows", () => {
-    for (const c of ["python3", "node", "psql", "less file.txt", "vim x.py", "top", "tail -f log"]) {
+    for (const c of ["python3", "node", "psql", "iex", "less file.txt", "vim x.py", "top", "tail -f log"]) {
+      assert.ok(classifyBlocking(c), `expected blocked: ${c}`);
+    }
+  });
+
+  test("flags dev servers across languages", () => {
+    for (const c of [
+      "flutter run", "flutter run -d chrome", "webdev serve",
+      "php artisan serve", "rails server", "mix phx.server", "dotnet run",
+      "cargo watch -x run", "hugo server", "streamlit run app.py",
+      "uvicorn main:app", "ng serve", "expo start", "./gradlew bootRun",
+      "mvn spring-boot:run", "next dev",
+    ]) {
       assert.ok(classifyBlocking(c), `expected blocked: ${c}`);
     }
   });
@@ -324,7 +336,12 @@ describe("classifyBlocking", () => {
   });
 
   test("allows normal one-shot commands", () => {
-    for (const c of ["python3 app.py", "node --check app.js", "npm test", "npm run build", "ls -la", "grep -w foo x", "git status"]) {
+    for (const c of [
+      "python3 app.py", "node --check app.js", "npm test", "npm run build",
+      "dart run main.dart", "flutter test", "flutter build apk", "go run main.go",
+      "cargo build", "dotnet build", "dotnet test", "mvn test",
+      "ls -la", "grep -w foo x", "git status",
+    ]) {
       assert.equal(classifyBlocking(c), null, `expected allowed: ${c}`);
     }
   });
