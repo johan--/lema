@@ -350,7 +350,7 @@ function summarizeArgs(args: Record<string, any>): string {
 }
 
 /** Lines of detail shown under a tool result, and the per-line width cap. */
-const PREVIEW_LINES = 3;
+const PREVIEW_LINES = 7;
 const PREVIEW_WIDTH = 72;
 
 /** Collapse whitespace and clip to a readable width for a preview line. */
@@ -407,7 +407,7 @@ export function summarizeResult(name: string, result: string): string {
       return clip(lines[0].replace(/^OK:\s*/, ""), 80);
     case "bash":
       if (result === "(no output)") return "(no output)";
-      return [plural(lines.length, "line"), ...head(result, 2)].join("\n");
+      return [plural(lines.length, "line"), ...head(result, 5)].join("\n");
     default:
       return `${result.length} chars`;
   }

@@ -10,12 +10,13 @@ describe("summarizeResult preview", () => {
   });
 
   test("grep shows count and first matches", () => {
-    const r = "a.ts:1:foo\nb.ts:2:foo\nc.ts:3:foo\nd.ts:4:foo";
+    const r = Array.from({ length: 10 }, (_, i) => `f${i}.ts:${i}:foo`).join("\n");
     const out = summarizeResult("grep", r);
     const lines = out.split("\n");
-    assert.equal(lines[0], "4 matches");
-    assert.match(lines[1], /a\.ts:1:foo/);
-    assert.match(out, /… \+1 more/);
+    assert.equal(lines[0], "10 matches");
+    assert.match(lines[1], /f0\.ts:0:foo/);
+    assert.equal(lines.length, 9); // header + 7 matches + "+more"
+    assert.match(out, /… \+3 more/);
   });
 
   test("glob singular/plural and no-match", () => {
