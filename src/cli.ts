@@ -10,6 +10,7 @@ import { discoverCheck, makeVerifier } from "./verify/index.js";
 import { loadRulesPreamble } from "./rules/index.js";
 import { ContextManager } from "./context/index.js";
 import * as ui from "./ui.js";
+import { checkForUpdate } from "./update-check.js";
 
 const HELP = `${ui.bold("lema")} — a local, self-improving agentic CLI
 
@@ -27,6 +28,7 @@ ${ui.bold("Config")} (lema.config.json or env)
 `;
 
 async function main() {
+  checkForUpdate();
   const argv = process.argv.slice(2);
   const cfg = loadConfig();
   const provider = new Provider(cfg);
