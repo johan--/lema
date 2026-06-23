@@ -10,3 +10,4 @@ lema.config.json
 
 # Local sandbox project for manually testing lema in different modes.
 sandbox/
+.firecrawl/
