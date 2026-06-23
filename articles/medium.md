@@ -1,14 +1,14 @@
 # Your local LLM isn't dumb. Your harness is.
 
-I've been running local models for about a year. LM Studio, Ollama, a few different quantized weights. And for most of that time I kept hitting the same wall: the model would start a task, make progress, then quietly hallucinate some detail, forget what it just wrote, or give up halfway through something it clearly could have finished.
+A 9B model just fixed a bug that a 30B model couldn't finish. Same codebase, same prompt, same machine. The 30B had more parameters and worse results.
 
-My first instinct was to upgrade the model. Bigger weights, better quant. It helped a little. But not as much as I expected.
+That result forced me to rethink what I'd been optimizing.
 
-Then I started paying attention to *how* the model was failing, not just *that* it was failing.
+I'd spent months upgrading weights, tweaking quants, and shopping for bigger models — and the actual bottleneck was something I'd barely touched: the harness. The loop around the model. The thing that decides what the model sees, whether it checks its own output, and what it remembers from last time.
 
 ---
 
-## The pattern
+## The pattern I kept seeing
 
 A 9B model tasked with "fix the failing tests in this repo" would typically:
 

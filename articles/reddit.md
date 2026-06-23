@@ -1,16 +1,17 @@
-# I built a local LLM agent CLI that makes a 9B model outperform a 30B — here's why it works
+# 9B at 8-bit beat 30B at iq2_xxs on every task. Quant quality matters more than parameters when the harness is right.
 
 **r/LocalLLaMA**
 
 ---
 
-Been running local models for a while and kept hitting the same wall: the model would start a task, look like it was making progress, then quietly return wrong output with full confidence.
+Ran the same coding tasks on qwen3.5-9B (8-bit) and qwen3-coder-30B (iq2_xxs) using a local agent harness I've been building. Results were not what I expected:
 
-The usual response is "use a bigger model." I tried that. Didn't help as much as expected.
+- 30B: 20-26 steps, loses track mid-task, repeats tool calls, confident wrong answer
+- 9B: 2-4 steps, reads → edits → verifies → done
 
-Turns out the problem wasn't the model — it was that there was no verification loop. The model had no way to know if its output was actually correct. It was just guessing and hoping.
+The 30B has more parameters. The aggressive quant wrecks its reasoning quality to the point where a well-quantized 9B just runs circles around it when the harness is actually doing its job.
 
-So I built **lema** — an open source agent CLI for local LLMs that adds what's missing:
+The harness is **lema** — open source agent CLI for local LLMs. The three things it adds that made the difference:
 
 **Verification loop** — after every code change, it runs your test suite. If tests fail, the output goes back to the model with "fix this." It loops until they pass. Model doesn't decide if it's done — the tests do.
 
@@ -51,10 +52,12 @@ Works with any OpenAI-compatible server. Zero cloud, zero API keys, zero cost pe
 
 There's also a `/remember` command in the TUI to manually save things to memory, and `AGENTS.md` support if you want to give it persistent project-level instructions.
 
-GitHub: https://github.com/iivgll/lema
+GitHub: https://github.com/iivgll/lema — MIT, TypeScript, zero runtime deps.
 
-Open source, MIT, TypeScript. Happy to answer questions about how the verification loop or memory retrieval works.
+Happy to answer questions. The verification loop and memory retrieval are the most interesting parts technically — ask if you want to dig in.
 
 ---
 
-**edit:** yes it works with Ollama too, just set `LEMA_BASE_URL=http://localhost:11434/v1`
+**edit:** yes it works with Ollama, just set `LEMA_BASE_URL=http://localhost:11434/v1`
+
+**edit 2:** the `reasoning_content` thing trips people up — LM Studio with thinking models returns `content: ""` and puts everything in `reasoning_content`. lema handles it but it was a fun bug to find via direct curl.
