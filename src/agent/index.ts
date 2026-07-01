@@ -125,6 +125,7 @@ async function forceFinish(
   reasoning: "low" | "medium" | "high" | undefined,
   lastCheck: CheckResult | null,
   signal?: AbortSignal,
+  fallbackReasoning?: string,
 ): Promise<string> {
   const status = lastCheck && !lastCheck.ok ? " The verification command is still FAILING — say so honestly." : "";
   ctx.push({
@@ -134,10 +135,10 @@ async function forceFinish(
   try {
     const { message } = await provider.chat(ctx.render(), { model, maxTokens, reasoningEffort: reasoning, signal });
     ctx.push(message);
-    const answer = stripToolMarkup(message.content || message.reasoning_content || "") || "Stopped before reaching a clean conclusion.";
+    const answer = stripToolMarkup(message.content || message.reasoning_content || fallbackReasoning || "") || "Stopped before reaching a clean conclusion.";
     return lastCheck && !lastCheck.ok ? `${answer}\n\n⚠️ Verification still failing.` : answer;
   } catch {
-    return "Stopped before reaching a conclusion.";
+    return fallbackReasoning || "Stopped before reaching a conclusion.";
   }
 }
 
@@ -298,7 +299,7 @@ export async function runAgent(task: string, opts: RunOptions): Promise<AgentRes
       // reasoning_content. Force a no-tools follow-up to get the actual answer.
       const rawContent = reply.content?.trim() ?? "";
       if (!rawContent && reply.reasoning_content) {
-        const finalAns = await forceFinish(provider, ctx, model, "Please write your final answer now.", maxTokens, profile.reasoning, lastCheck, opts.signal);
+        const finalAns = await forceFinish(provider, ctx, model, "Please write your final answer now.", maxTokens, profile.reasoning, lastCheck, opts.signal, reply.reasoning_content);
         const answer = finalAns || reply.reasoning_content;
         emit({ type: "done", text: answer, stats: stats() });
         return { answer, steps, transcript: ctx.render() };
