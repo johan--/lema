@@ -2,6 +2,7 @@ import { stdin, stdout } from "node:process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { saveConfig } from "../config.js";
 import type { LemaConfig } from "../config.js";
 import type { ModelProvider } from "../provider.js";
 import { MemoryStore } from "../memory.js";
@@ -494,6 +495,7 @@ export async function startRepl(cfg: LemaConfig, provider: ModelProvider): Promi
   session.setModel = (id) => {
     cfg.model = id;
     footerRight = `${id} · local`;
+    saveConfig(cfg, process.cwd());
   };
   session.setWeb = (on) => {
     cfg.tools = { ...cfg.tools, web: on };

@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { type ContextBudget, BUDGET_DEFAULTS } from "./context/index.js";
 import type { EffortSetting } from "./effort.js";
@@ -45,6 +45,19 @@ export const DEFAULTS: LemaConfig = {
   rules: { enabled: true, reinject: true, reinjectEvery: 6 },
   context: BUDGET_DEFAULTS,
 };
+
+/** Persist selected fields back to lema.config.json (model, effort, etc). */
+export function saveConfig(cfg: LemaConfig, cwd = process.cwd()): void {
+  const path = resolve(cwd, "lema.config.json");
+  // Read the raw file so we only touch what already exists there — don't
+  // bloat the file with every default field.
+  let raw: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    try { raw = JSON.parse(readFileSync(path, "utf8")); } catch {}
+  }
+  if (cfg.model !== undefined) raw["model"] = cfg.model;
+  writeFileSync(path, JSON.stringify(raw, null, 2) + "\n", "utf8");
+}
 
 /** Load lema.config.json from cwd (if present) merged over defaults + env. */
 export function loadConfig(cwd = process.cwd()): LemaConfig {
